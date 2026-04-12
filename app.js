@@ -495,12 +495,13 @@ const YF_EXCH_MAP = {
   'BTS': 'OTC',    'PNK': 'OTC',
 };
 
-// CORS 프록시 목록 생성 유틸리티
+// CORS 프록시 목록 생성 유틸리티 (프록시 먼저, 직접 URL 마지막)
 function mkProxies(url) {
   return [
-    url,
+    `${CFG.CORS}${encodeURIComponent(url)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    url,
   ];
 }
 
@@ -579,11 +580,44 @@ async function searchSymbol(region, query) {
       } catch {}
     }
 
-    // ③ 모든 API 실패 → 코드 입력 안내
-    dropEl.innerHTML = `<div class="search-result-list">
-      <div class="search-msg">검색 연결 실패 — <b>숫자 종목코드</b>로 입력하세요<br>
-      <span style="color:var(--text-3);font-size:11px">삼성전자→005930 · SK하이닉스→000660 · 카카오→035720</span></div>
-    </div>`;
+    // ③ 모든 API 실패 → 내장 인기 종목 목록으로 fallback
+    {
+      const KR_POPULAR = [
+        ['005930','삼성전자'],['000660','SK하이닉스'],['005380','현대자동차'],
+        ['035420','NAVER'],  ['000270','기아자동차'], ['051910','LG화학'],
+        ['035720','카카오'],  ['055550','신한지주'],  ['105560','KB금융'],
+        ['012330','현대모비스'],['066570','LG전자'],  ['086790','하나금융지주'],
+        ['003550','LG'],     ['006400','삼성SDI'],    ['207940','삼성바이오로직스'],
+        ['068270','셀트리온'],['373220','LG에너지솔루션'],['323410','카카오뱅크'],
+        ['009150','삼성전기'],['017670','SK텔레콤'],  ['030200','KT'],
+        ['003490','대한항공'],['015760','한국전력'],  ['000810','삼성화재'],
+        ['034730','SK'],     ['032830','삼성생명'],   ['096770','SK이노베이션'],
+        ['009540','한국조선해양'],['010950','S-Oil'], ['086520','에코프로'],
+        ['247540','에코프로비엠'],['352820','하이브'], ['041510','SM엔터테인먼트'],
+        ['032640','LG유플러스'],['018260','삼성SDS'], ['011170','롯데케미칼'],
+        ['024110','기업은행'], ['028260','삼성물산'],  ['011200','HMM'],
+      ];
+      const q2 = query.toLowerCase();
+      const matched = KR_POPULAR.filter(([code, name]) =>
+        name.toLowerCase().includes(q2) || q2.includes(name.toLowerCase()) || code.includes(q2)
+      ).slice(0, 10);
+
+      if (matched.length) {
+        const list = document.createElement('div');
+        list.className = 'search-result-list';
+        matched.forEach(([code, name]) => {
+          const fullSym = `KRX:${code}`;
+          const display = `${name}(${code})`;
+          list.appendChild(makeResultItem(fullSym, display, 'KRX', 'kr', dropEl));
+        });
+        dropEl.innerHTML = ''; dropEl.appendChild(list);
+        return;
+      }
+      dropEl.innerHTML = `<div class="search-result-list">
+        <div class="search-msg">검색 연결 실패 — <b>숫자 종목코드</b>로 입력하세요<br>
+        <span style="color:var(--text-3);font-size:11px">삼성전자→005930 · SK하이닉스→000660 · 카카오→035720</span></div>
+      </div>`;
+    }
     return;
   }
 
@@ -713,40 +747,57 @@ async function renderKRChart(entry) {
     return;
   }
 
-  // ── 데이터 fetch: 네이버금융 fchart → Stooq (.KS/.KQ) 순서로 시도 ──
+  // ── 데이터 fetch: Yahoo Finance → 네이버금융 fchart → Stooq (.KS/.KQ) 순서로 시도 ──
   let ohlc = null;
 
-  // 1순위: 네이버금융 fchart XML API (codetabs 프록시)
-  const naverUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${ticker}&timeframe=day&count=300&requestType=0`;
-  for (const p of [
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(naverUrl)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(naverUrl)}`,
-    naverUrl,
-  ]) {
-    try {
-      const res  = await fetch(p, { signal: AbortSignal.timeout(10000) });
-      const text = await res.text();
-      // 네이버 fchart: <item data="20260411|72100|73000|71500|72500|12345678"/>
-      const matches = [...text.matchAll(/data="(\d{8})\|(\d+)\|(\d+)\|(\d+)\|(\d+)/g)];
-      if (matches.length >= 5) {
-        ohlc = matches.map(m => ({
-          time:  `${m[1].slice(0,4)}-${m[1].slice(4,6)}-${m[1].slice(6,8)}`,
-          open: +m[2], high: +m[3], low: +m[4], close: +m[5],
-        })).sort((a, b) => a.time < b.time ? -1 : 1);
-        break;
-      }
-    } catch {}
+  // 0순위: Yahoo Finance (.KS / .KQ) — CORS 프리미엄 API, 가장 안정적
+  outer_yf: for (const suffix of ['.KS', '.KQ']) {
+    const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}${suffix}?interval=1d&range=1y&events=div%2Csplit`;
+    for (const p of mkProxies(yfUrl)) {
+      try {
+        const res  = await fetch(p, { signal: AbortSignal.timeout(8000) });
+        const data = await res.json();
+        const result = data?.chart?.result?.[0];
+        if (!result) continue;
+        const ts = result.timestamp || [];
+        const q  = result.indicators?.quote?.[0] || {};
+        if (ts.length < 5) continue;
+        const rows = ts.map((t, i) => ({
+          time:  new Date(t * 1000).toISOString().slice(0, 10),
+          open:  q.open?.[i],  high: q.high?.[i],
+          low:   q.low?.[i],   close: q.close?.[i],
+        })).filter(d => d.open && d.high && d.low && d.close)
+           .sort((a, b) => a.time < b.time ? -1 : 1).slice(-250);
+        if (rows.length >= 5) { ohlc = rows; break outer_yf; }
+      } catch {}
+    }
+  }
+
+  // 1순위: 네이버금융 fchart XML API
+  if (!ohlc) {
+    const naverUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${ticker}&timeframe=day&count=300&requestType=0`;
+    for (const p of mkProxies(naverUrl)) {
+      try {
+        const res  = await fetch(p, { signal: AbortSignal.timeout(10000) });
+        const text = await res.text();
+        // 네이버 fchart: <item data="20260411|72100|73000|71500|72500|12345678"/>
+        const matches = [...text.matchAll(/data="(\d{8})\|(\d+)\|(\d+)\|(\d+)\|(\d+)/g)];
+        if (matches.length >= 5) {
+          ohlc = matches.map(m => ({
+            time:  `${m[1].slice(0,4)}-${m[1].slice(4,6)}-${m[1].slice(6,8)}`,
+            open: +m[2], high: +m[3], low: +m[4], close: +m[5],
+          })).sort((a, b) => a.time < b.time ? -1 : 1);
+          break;
+        }
+      } catch {}
+    }
   }
 
   // 2순위: Stooq CSV (.KS / .KQ)
   if (!ohlc) {
     outer: for (const suffix of ['.KS', '.KQ']) {
       const stooqUrl = `https://stooq.com/q/d/l/?s=${ticker}${suffix}&i=d`;
-      for (const p of [
-        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(stooqUrl)}`,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(stooqUrl)}`,
-        stooqUrl,
-      ]) {
+      for (const p of mkProxies(stooqUrl)) {
         try {
           const res  = await fetch(p, { signal: AbortSignal.timeout(9000) });
           const text = await res.text();
