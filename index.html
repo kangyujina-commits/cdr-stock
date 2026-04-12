@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📈 CDR_Stock</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://s3.tradingview.com/tv.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="header-left">
+      <span class="logo">📈 CDR_Stock</span>
+    </div>
+    <nav class="main-tabs">
+      <button class="tab-btn active" data-tab="market">시장현황</button>
+      <button class="tab-btn" data-tab="news">뉴스</button>
+      <button class="tab-btn" data-tab="chart">차트</button>
+      <button class="tab-btn" data-tab="coin">코인</button>
+    </nav>
+    <div class="header-right">
+      <span id="clock" class="clock"></span>
+    </div>
+  </header>
+
+  <!-- ===== MAIN ===== -->
+  <main class="main">
+
+    <!-- ==================== MARKET TAB ==================== -->
+    <section id="market-tab" class="tab-content active">
+      <div class="market-topbar">
+        <span class="market-update-label">마지막 업데이트: <span id="market-updated">—</span></span>
+        <button class="icon-btn" id="market-refresh-btn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          새로고침
+        </button>
+      </div>
+      <div class="market-grid" id="market-grid">
+        <!-- 카드 JS에서 생성 -->
+      </div>
+    </section>
+
+    <!-- ==================== NEWS TAB ==================== -->
+    <section id="news-tab" class="tab-content">
+      <div class="sub-tabs">
+        <button class="sub-tab-btn active" data-subtab="kr-news">한국뉴스</button>
+        <button class="sub-tab-btn" data-subtab="us-news">US 미국뉴스</button>
+        <div class="sub-tabs-spacer"></div>
+        <button class="icon-btn" id="news-refresh-btn" title="뉴스 새로고침">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          새로고침
+        </button>
+      </div>
+
+      <div id="kr-news" class="sub-tab-content active">
+        <div class="source-bar">
+          <span class="source-label">소스</span>
+          <button class="source-btn active" data-region="kr" data-source="hankyung">한국경제</button>
+        </div>
+        <div id="kr-news-list" class="news-list">
+          <div class="news-loading"><div class="spinner"></div><span>뉴스 불러오는 중...</span></div>
+        </div>
+      </div>
+
+      <div id="us-news" class="sub-tab-content">
+        <div class="source-bar">
+          <span class="source-label">소스</span>
+          <button class="source-btn active" data-region="us" data-source="marketwatch">MarketWatch</button>
+          <button class="source-btn" data-region="us" data-source="cnbc">CNBC</button>
+        </div>
+        <div id="us-news-list" class="news-list">
+          <div class="news-loading"><div class="spinner"></div><span>뉴스 불러오는 중...</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== CHART TAB ==================== -->
+    <section id="chart-tab" class="tab-content">
+      <div class="sub-tabs">
+        <button class="sub-tab-btn active" data-subtab="kr-chart">한국주식</button>
+        <button class="sub-tab-btn" data-subtab="us-chart">US 미국주식</button>
+        <div class="sub-tabs-spacer"></div>
+        <button class="icon-btn" id="clear-charts-btn">🗑 초기화</button>
+      </div>
+
+      <div id="kr-chart" class="sub-tab-content active">
+        <div class="search-bar">
+          <div class="search-wrap">
+            <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="kr-search" class="search-input" placeholder="종목명 또는 코드 검색 (예: 삼성전자, 005930)">
+            <button class="search-btn" id="kr-search-btn">검색</button>
+          </div>
+          <div id="kr-search-results" class="search-dropdown"></div>
+        </div>
+        <div class="search-hint">💡 검색 후 결과를 클릭하거나, 종목코드 입력 후 Enter로 바로 추가 · 일봉 차트 표시</div>
+        <div id="kr-charts-grid" class="charts-grid"></div>
+      </div>
+
+      <div id="us-chart" class="sub-tab-content">
+        <div class="search-bar">
+          <div class="search-wrap">
+            <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="us-search" class="search-input" placeholder="티커 또는 종목명 검색 (예: AAPL, Apple)">
+            <button class="search-btn" id="us-search-btn">검색</button>
+          </div>
+          <div id="us-search-results" class="search-dropdown"></div>
+        </div>
+        <div class="search-hint">💡 검색 후 결과를 클릭하거나, 티커 입력 후 Enter로 바로 추가</div>
+        <div id="us-charts-grid" class="charts-grid"></div>
+      </div>
+    </section>
+
+    <!-- ==================== COIN TAB ==================== -->
+    <section id="coin-tab" class="tab-content">
+      <div class="sub-tabs">
+        <button class="sub-tab-btn active" data-subtab="coin-gl">글로벌 (Binance)</button>
+        <button class="sub-tab-btn" data-subtab="coin-kr">국내 (Upbit)</button>
+        <div class="sub-tabs-spacer"></div>
+        <button class="icon-btn" id="clear-coin-btn">🗑 초기화</button>
+      </div>
+
+      <!-- 글로벌 코인 -->
+      <div id="coin-gl" class="sub-tab-content active">
+        <div class="search-bar">
+          <div class="search-wrap">
+            <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="coin-gl-search" class="search-input" placeholder="코인 검색 (예: BTC, Bitcoin, ETH)">
+            <button class="search-btn" id="coin-gl-search-btn">검색</button>
+          </div>
+          <div id="coin-gl-search-results" class="search-dropdown"></div>
+        </div>
+        <div class="search-hint">💡 Binance USDT 마켓 기준 · 티커 입력 후 Enter로 바로 추가</div>
+        <div id="coin-gl-charts-grid" class="charts-grid"></div>
+      </div>
+
+      <!-- 국내 코인 -->
+      <div id="coin-kr" class="sub-tab-content">
+        <div class="search-bar">
+          <div class="search-wrap">
+            <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="coin-kr-search" class="search-input" placeholder="코인 검색 (예: BTC, 비트코인, ETH)">
+            <button class="search-btn" id="coin-kr-search-btn">검색</button>
+          </div>
+          <div id="coin-kr-search-results" class="search-dropdown"></div>
+        </div>
+        <div class="search-hint">💡 Upbit KRW 마켓 기준 · 티커 입력 후 Enter로 바로 추가</div>
+        <div id="coin-kr-charts-grid" class="charts-grid"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===== TOAST ===== -->
+  <div id="toast" class="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
