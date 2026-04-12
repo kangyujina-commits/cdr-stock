@@ -106,6 +106,15 @@ button { cursor: pointer; font-family: inherit; }
   font-weight: 500;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+}
+.clock-tz {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-3);
+  opacity: 0.6;
+  letter-spacing: 0.5px;
+}
+
   letter-spacing: 0.5px;
 }
 

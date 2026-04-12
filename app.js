@@ -123,9 +123,13 @@ function initTheme() {
 function initClock() {
   const el = document.getElementById('clock');
   if (!el) return;
-  const tick = () => el.textContent = new Date().toLocaleTimeString('ko-KR', {
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  });
+  const tick = () => {
+    const time = new Date().toLocaleTimeString('ko-KR', {
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+      timeZone: 'Asia/Seoul',
+    });
+    el.innerHTML = `${time} <span class="clock-tz">KST</span>`;
+  };
   tick(); setInterval(tick, 1000);
 }
 
