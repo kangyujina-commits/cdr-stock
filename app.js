@@ -21,15 +21,13 @@ const CFG = {
 // type: 'fng' → alternative.me 공포탐욕지수
 // type: 'er'  → open.er-api.com 환율 (fallback)
 const MARKET_ITEMS = [
-  // type:'api' → Stooq 무료 API (KRX/CBOE 임베드 제한 우회)
-  { id: 'kospi',  label: 'KOSPI',           type: 'api', stooq: '%5eks11' },
-  { id: 'kosdaq', label: 'KOSDAQ',          type: 'api', stooq: '%5ekq11' },
-  // type:'tv'  → TradingView 단일 시세 위젯 (미국 지수·환율)
+  { id: 'kospi',  label: 'KOSPI',           type: 'api', stooq: '%5EKS11', yahoo: '%5EKS11', naverIdx: 'KOSPI'  },
+  { id: 'kosdaq', label: 'KOSDAQ',          type: 'api', stooq: '%5EKQ11', yahoo: '%5EKQ11', naverIdx: 'KOSDAQ' },
   { id: 'sp500',  label: 'S&P 500',         type: 'tv',  tvSym: 'FOREXCOM:SPXUSD' },
   { id: 'nasdaq', label: 'NASDAQ',          type: 'tv',  tvSym: 'FOREXCOM:NSXUSD' },
   { id: 'usdkrw', label: '원 / 달러',       type: 'tv',  tvSym: 'FX_IDC:USDKRW' },
   { id: 'jpykrw', label: '원 / 엔 (100엔)', type: 'tv',  tvSym: 'FX_IDC:JPYKRW' },
-  { id: 'vix',    label: 'VIX',             type: 'api', stooq: '%5evix' },
+  { id: 'vix',    label: 'VIX',             type: 'api', stooq: '%5EVIX',  yahoo: '%5EVIX'  },
   { id: 'fng',    label: '공포탐욕지수',    type: 'fng' },
 ];
 
@@ -232,64 +230,95 @@ async function fetchAPIMarketItem(item) {
   const card  = document.getElementById(`mc-${item.id}`);
   if (!valEl || !chgEl || !card) return;
 
-  const stooqUrl = `https://stooq.com/q/l/?s=${item.stooq}&f=sd2t2ohlcv&e=json`;
-
-  // Stooq JSON 파싱 (직접 또는 프록시 응답 공통)
-  function parseSym(data) {
-    const sym = data?.symbols?.[0];
-    if (!sym) return null;
-    const c = parseFloat(sym.c);
-    const o = parseFloat(sym.o);
-    if (isNaN(c) || c === 0) return null;       // N/D 또는 0이면 무효
-    return { close: c, open: isNaN(o) ? c : o, date: sym.d };
-  }
+  const proxify = mkProxies; // 전역 유틸리티 사용
 
   let parsed = null;
 
-  // ① Stooq 직접 접속 (CORS 허용 시 가장 빠름)
-  if (!parsed) {
-    try {
-      const res  = await fetch(stooqUrl, { signal: AbortSignal.timeout(7000) });
-      const data = await res.json();
-      parsed = parseSym(data);
-    } catch { /* CORS 차단 등 — 다음 방법 시도 */ }
+  // ① 네이버 모바일 지수 API (KOSPI/KOSDAQ 전용, 가장 안정적)
+  if (!parsed && item.naverIdx) {
+    const url = `https://m.stock.naver.com/api/index/${item.naverIdx}/basic`;
+    for (const p of proxify(url)) {
+      try {
+        const res  = await fetch(p, { signal: AbortSignal.timeout(6000) });
+        const data = await res.json();
+        // 응답: {closePrice:"2500.00", compareToPreviousClosePrice:"5.00", fluctuationsRatio:"0.20"}
+        const closeStr = data?.closePrice ?? data?.close;
+        const c = parseFloat(String(closeStr || '').replace(/,/g, ''));
+        if (!isNaN(c) && c > 0) {
+          const prevDiff = parseFloat(String(data?.compareToPreviousClosePrice || '0').replace(/,/g, ''));
+          const o = c - prevDiff;
+          parsed = { close: c, open: isNaN(o) ? c : o, date: new Date().toISOString().slice(0, 10) };
+          break;
+        }
+      } catch {}
+    }
   }
 
-  // ② allorigins.win 프록시
+  // ② Stooq JSON (직접 + 프록시)
   if (!parsed) {
-    try {
-      const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(stooqUrl)}`;
-      const res   = await fetch(proxy, { signal: AbortSignal.timeout(10000) });
-      const data  = await res.json();
-      parsed = parseSym(data);
-    } catch { /* 프록시도 실패 */ }
+    const url = `https://stooq.com/q/l/?s=${item.stooq}&f=sd2t2ohlcv&e=json`;
+    for (const p of proxify(url)) {
+      try {
+        const res = await fetch(p, { signal: AbortSignal.timeout(7000) });
+        const data = await res.json();
+        const sym = data?.symbols?.[0];
+        const c = parseFloat(sym?.c), o = parseFloat(sym?.o);
+        if (!isNaN(c) && c > 0) { parsed = { close: c, open: isNaN(o) ? c : o, date: sym.d }; break; }
+      } catch {}
+    }
   }
 
-  // 데이터 획득 성공 → 화면 표시 + 캐시 저장
+  // ③ Yahoo Finance v8 (Stooq 실패 시 fallback)
+  if (!parsed && item.yahoo) {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${item.yahoo}?interval=1d&range=5d`;
+    for (const p of proxify(url)) {
+      try {
+        const res  = await fetch(p, { signal: AbortSignal.timeout(8000) });
+        const data = await res.json();
+        const meta = data?.chart?.result?.[0]?.meta;
+        const c = meta?.regularMarketPrice;
+        const o = meta?.regularMarketPreviousClose || meta?.chartPreviousClose;
+        if (c) { parsed = { close: c, open: o || c, date: new Date().toISOString().slice(0, 10) }; break; }
+      } catch {}
+    }
+  }
+
+  // ④ Yahoo Finance v7 quote (추가 fallback)
+  if (!parsed && item.yahoo) {
+    const url = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${item.yahoo}`;
+    for (const p of proxify(url)) {
+      try {
+        const res  = await fetch(p, { signal: AbortSignal.timeout(8000) });
+        const data = await res.json();
+        const q = data?.quoteResponse?.result?.[0];
+        const c = q?.regularMarketPrice;
+        const o = q?.regularMarketPreviousClose;
+        if (c) { parsed = { close: c, open: o || c, date: new Date().toISOString().slice(0, 10) }; break; }
+      } catch {}
+    }
+  }
+
+  // 성공 → 화면 + 캐시
   if (parsed) {
     const { close, open, date } = parsed;
     const change = close - open;
     const pct    = open ? (change / open) * 100 : 0;
     const sign   = change >= 0 ? '+' : '';
-
-    // localStorage에 마지막 성공 데이터 저장
     save(`mkt-${item.id}`, { close, open, change, pct, date });
-
     card.classList.remove('positive', 'negative');
     card.classList.add(change >= 0 ? 'positive' : 'negative');
     valEl.innerHTML = `<span>${close.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}</span>`;
     chgEl.innerHTML = `<span class="chg-amt">${sign}${change.toFixed(2)}</span>
       <span class="chg-pct">(${sign}${pct.toFixed(2)}%)</span>`;
-
     const upEl = document.getElementById('market-updated');
     if (upEl) upEl.textContent = new Date().toLocaleTimeString('ko-KR',
       { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
     return;
   }
 
-  // ③ 캐시에서 마지막 종가 표시 (장 마감·주말)
+  // ③ 캐시 (장 마감·주말)
   const cached = load(`mkt-${item.id}`);
-  if (cached && cached.close) {
+  if (cached?.close) {
     const { close, change, pct, date } = cached;
     const sign = change >= 0 ? '+' : '';
     card.classList.remove('positive', 'negative');
@@ -301,7 +330,6 @@ async function fetchAPIMarketItem(item) {
     return;
   }
 
-  // 캐시도 없음 (최초 실행 + 네트워크 실패)
   valEl.innerHTML = `<span style="color:var(--text-3)">—</span>`;
   chgEl.innerHTML = `<span style="color:var(--text-3);font-size:11px">데이터 없음</span>`;
 }
@@ -430,10 +458,9 @@ function initChartSearch(regions) {
         const q = input.value.trim(); if (!q) return;
         const first = dropEl.querySelector('.search-result-item[data-symbol]');
         if (first) { first.click(); return; }
-        // 한국 주식 탭에서 한글 직접 입력 차단
+        // 한글 입력 시 검색 API 호출 (이름→종목코드 자동 검색)
         if (region === 'kr' && /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(q)) {
-          toast('종목코드(숫자)로 검색하세요 · 예: 005930', 'error');
-          searchSymbol(region, q); // 검색 결과는 보여줌
+          searchSymbol(region, q);
           return;
         }
         addChart(region, buildSymbol(region, q), q.toUpperCase());
@@ -460,72 +487,175 @@ const TYPE_MAP = {
   'kr': 'stock', 'us': 'stock', 'coin-gl': 'crypto', 'coin-kr': 'crypto',
 };
 
-async function searchSymbol(region, query) {
-  const dropEl   = document.getElementById(`${region}-search-results`);
-  const exchange = EXCHANGE_MAP[region] || 'NASDAQ';
-  const type     = TYPE_MAP[region]     || 'stock';
+// Yahoo Finance exchange 코드 → TradingView exchange 이름 매핑
+const YF_EXCH_MAP = {
+  'NMS': 'NASDAQ', 'NGM': 'NASDAQ', 'NIM': 'NASDAQ',
+  'NYQ': 'NYSE',   'PCX': 'NYSE',
+  'ASE': 'AMEX',
+  'BTS': 'OTC',    'PNK': 'OTC',
+};
 
+// CORS 프록시 목록 생성 유틸리티
+function mkProxies(url) {
+  return [
+    url,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  ];
+}
+
+// 검색 결과 아이템 DOM 생성 (공통 헬퍼)
+function makeResultItem(fullSym, display, exchLabel, region, dropEl) {
+  const div = document.createElement('div');
+  div.className = 'search-result-item';
+  div.dataset.symbol = fullSym;
+  div.innerHTML = `<span class="result-name">${esc(display)}</span><span class="result-exchange">${esc(exchLabel)}</span>`;
+  div.addEventListener('click', () => {
+    addChart(region, fullSym, display);
+    dropEl.innerHTML = '';
+    const inp = document.getElementById(`${region}-search`);
+    if (inp) inp.value = '';
+  });
+  return div;
+}
+
+async function searchSymbol(region, query) {
+  const dropEl = document.getElementById(`${region}-search-results`);
+  if (!dropEl) return;
   dropEl.innerHTML = `<div class="search-result-list"><div class="search-msg">검색 중...</div></div>`;
 
-  try {
-    const fullUrl = `${CFG.TV_SEARCH}?text=${encodeURIComponent(query)}&exchange=${exchange}&type=${type}&domain=production`;
-    let data;
-    // 검색 프록시: 직접 → codetabs → allorigins 순서로 시도
-    const proxies = [
-      fullUrl,
-      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(fullUrl)}`,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(fullUrl)}`,
-    ];
-    for (const p of proxies) {
+  // ═══════════════════════════════════════════════════════
+  //  한국 주식: Naver 모바일 검색 API → Naver autocomplete
+  // ═══════════════════════════════════════════════════════
+  if (region === 'kr') {
+
+    // ① Naver 모바일 종목 검색
+    const naverSearchUrl = `https://m.stock.naver.com/search/api/category/stock?query=${encodeURIComponent(query)}&page=1&pageSize=10`;
+    for (const p of mkProxies(naverSearchUrl)) {
       try {
-        const res = await fetch(p, { signal: AbortSignal.timeout(7000) });
-        data = await res.json();
-        if (Array.isArray(data)) break;
+        const res  = await fetch(p, { signal: AbortSignal.timeout(7000) });
+        const data = await res.json();
+        const items = (data?.searchList || data?.result || [])
+          .filter(i => i.code && /^\d{5,6}$/.test(String(i.code))).slice(0, 10);
+        if (items.length) {
+          const list = document.createElement('div');
+          list.className = 'search-result-list';
+          items.forEach(i => {
+            const fullSym = `KRX:${i.code}`;
+            const display = `${i.name}(${i.code})`;
+            list.appendChild(makeResultItem(fullSym, display, 'KRX', 'kr', dropEl));
+          });
+          dropEl.innerHTML = ''; dropEl.appendChild(list);
+          return;
+        }
+      } catch {}
+    }
+
+    // ② Naver autocomplete (JSONP 파싱)
+    const naverAcUrl = `https://ac.finance.naver.com/ac?q=${encodeURIComponent(query)}&q_enc=utf-8&target=stock&sug_num=10`;
+    for (const p of mkProxies(naverAcUrl)) {
+      try {
+        const res  = await fetch(p, { signal: AbortSignal.timeout(5000) });
+        const text = await res.text();
+        const match = text.match(/\{[\s\S]*\}/);
+        if (!match) continue;
+        const nd = JSON.parse(match[0]);
+        let raw = nd?.items;
+        if (!raw?.length) continue;
+        // 중첩 배열 정규화: [[["005930","삼성전자"],...]] → [["005930","삼성전자"],...]
+        if (Array.isArray(raw[0]) && Array.isArray(raw[0][0])) raw = raw.flat(1);
+        const valid = raw.filter(i => Array.isArray(i) && /^\d{5,6}$/.test(String(i[0]))).slice(0, 10);
+        if (valid.length) {
+          const list = document.createElement('div');
+          list.className = 'search-result-list';
+          valid.forEach(([code, name]) => {
+            const fullSym = `KRX:${code}`;
+            const display = `${name}(${code})`;
+            list.appendChild(makeResultItem(fullSym, display, 'KRX', 'kr', dropEl));
+          });
+          dropEl.innerHTML = ''; dropEl.appendChild(list);
+          return;
+        }
+      } catch {}
+    }
+
+    // ③ 모든 API 실패 → 코드 입력 안내
+    dropEl.innerHTML = `<div class="search-result-list">
+      <div class="search-msg">검색 연결 실패 — <b>숫자 종목코드</b>로 입력하세요<br>
+      <span style="color:var(--text-3);font-size:11px">삼성전자→005930 · SK하이닉스→000660 · 카카오→035720</span></div>
+    </div>`;
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  미국 주식: Yahoo Finance 검색 → TradingView 검색
+  // ═══════════════════════════════════════════════════════
+  if (region === 'us') {
+
+    // ① Yahoo Finance 검색 (이름→티커 자동 매핑)
+    const yfUrl = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=8&newsCount=0&lang=en-US`;
+    for (const p of mkProxies(yfUrl)) {
+      try {
+        const res  = await fetch(p, { signal: AbortSignal.timeout(7000) });
+        const data = await res.json();
+        const quotes = (data?.quotes || [])
+          .filter(q => (q.quoteType === 'EQUITY' || q.quoteType === 'ETF') && q.symbol)
+          .slice(0, 8);
+        if (quotes.length) {
+          const list = document.createElement('div');
+          list.className = 'search-result-list';
+          quotes.forEach(q => {
+            const exch    = YF_EXCH_MAP[q.exchange] || q.exchDisp || q.exchange || 'NASDAQ';
+            const fullSym = `${exch}:${q.symbol}`;
+            const name    = q.shortname || q.longname || q.symbol;
+            const display = `${name}(${q.symbol})`;
+            list.appendChild(makeResultItem(fullSym, display, exch, 'us', dropEl));
+          });
+          dropEl.innerHTML = ''; dropEl.appendChild(list);
+          return;
+        }
+      } catch {}
+    }
+    // Yahoo 실패 → TradingView 검색으로 fallthrough
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  코인 / US fallback: TradingView 심볼 검색
+  // ═══════════════════════════════════════════════════════
+  const exchange = EXCHANGE_MAP[region] || 'NASDAQ';
+  const type     = TYPE_MAP[region]     || 'stock';
+  try {
+    const tvUrl = `${CFG.TV_SEARCH}?text=${encodeURIComponent(query)}&exchange=${exchange}&type=${type}&domain=production`;
+    let data;
+    for (const p of mkProxies(tvUrl)) {
+      try {
+        const res  = await fetch(p, { signal: AbortSignal.timeout(7000) });
+        const json = await res.json();
+        // TV v3: 배열 또는 {symbols:[...]} 형식 모두 처리
+        if (Array.isArray(json)) { data = json; break; }
+        if (json?.symbols && Array.isArray(json.symbols)) { data = json.symbols; break; }
       } catch {}
     }
 
     if (!Array.isArray(data) || !data.length) {
-      dropEl.innerHTML = `<div class="search-result-list"><div class="search-msg">결과 없음 — Enter로 직접 추가</div></div>`;
+      dropEl.innerHTML = `<div class="search-result-list"><div class="search-msg">결과 없음</div></div>`;
       return;
     }
 
     const list = document.createElement('div');
     list.className = 'search-result-list';
     data.slice(0, 10).forEach(item => {
-      const fullSym = `${item.exchange}:${item.symbol}`;
+      const fullSym = (item.exchange && item.exchange.trim())
+        ? `${item.exchange}:${item.symbol}`
+        : item.symbol;
       const name    = item.description || item.full_name || item.symbol;
       const display = `${name}(${item.symbol})`;
-      const div = document.createElement('div');
-      div.className = 'search-result-item';
-      div.dataset.symbol = fullSym;
-      div.innerHTML = `<span class="result-name">${esc(display)}</span><span class="result-exchange">${esc(item.exchange || '')}</span>`;
-      div.addEventListener('click', () => {
-        addChart(region, fullSym, display);
-        dropEl.innerHTML = '';
-        const inp = document.getElementById(`${region}-search`);
-        if (inp) inp.value = '';
-      });
-      list.appendChild(div);
+      list.appendChild(makeResultItem(fullSym, display, item.exchange || '', region, dropEl));
     });
     dropEl.innerHTML = ''; dropEl.appendChild(list);
 
   } catch {
-    // 한국 주식 탭에서 한글 검색 실패 시 → 코드 입력 안내만 표시
-    if (region === 'kr' && /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(query)) {
-      dropEl.innerHTML = `<div class="search-result-list">
-        <div class="search-msg">검색 연결 실패 — <b>숫자 종목코드</b>로 입력하세요<br>
-        <span style="color:var(--text-3);font-size:11px">삼성전자→005930 · SK하이닉스→000660 · 카카오→035720</span></div>
-      </div>`;
-      return;
-    }
-    const sym = buildSymbol(region, query);
-    dropEl.innerHTML = `<div class="search-result-list"><div class="search-result-item" data-symbol="${esc(sym)}" id="direct-${region}">
-      <span class="result-name">${esc(query.toUpperCase())} — 직접 추가</span>
-      <span class="result-exchange">${exchange.split(',')[0]}</span></div></div>`;
-    document.getElementById(`direct-${region}`)?.addEventListener('click', () => {
-      addChart(region, sym, query.toUpperCase()); dropEl.innerHTML = '';
-      const inp = document.getElementById(`${region}-search`); if (inp) inp.value = '';
-    });
+    dropEl.innerHTML = `<div class="search-result-list"><div class="search-msg">검색 실패 — 다시 시도해 주세요</div></div>`;
   }
 }
 
