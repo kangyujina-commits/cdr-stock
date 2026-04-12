@@ -703,125 +703,126 @@ function buildSymbol(region, raw) {
   return q;
 }
 
-// ─── 한국 주식 차트: Lightweight Charts + 네이버금융 API ───────
-async function renderKRChart(entry) {
-  const grid = document.getElementById('kr-charts-grid');
-  if (!grid) return;
-  updateEmptyState('kr');
+// ─── 한국 주식 차트: interval별 데이터 fetch ────────────────────
+async function fetchKRChartData(ticker, interval) {
+  let ohlc = null;
+  const isIntraday = interval !== '1d';
 
-  // 종목코드 추출: KRX:005930 → 005930
-  const ticker = entry.symbol.replace(/^[A-Z]+:/i, '').trim();
+  if (isIntraday) {
+    // 분봉: Yahoo Finance intraday API
+    const range = interval === '1m' ? '2d' : '5d';
+    outer_yf_id: for (const suffix of ['.KS', '.KQ']) {
+      const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}${suffix}?interval=${interval}&range=${range}`;
+      for (const p of mkProxies(yfUrl)) {
+        try {
+          const res    = await fetch(p, { signal: AbortSignal.timeout(8000) });
+          const data   = await res.json();
+          const result = data?.chart?.result?.[0];
+          if (!result) continue;
+          const ts = result.timestamp || [];
+          const q  = result.indicators?.quote?.[0] || {};
+          if (ts.length < 5) continue;
+          const rows = ts.map((t, i) => ({
+            time:  t + 9 * 3600,   // UTC → KST (초 단위 Unix timestamp)
+            open:  q.open?.[i],  high: q.high?.[i],
+            low:   q.low?.[i],   close: q.close?.[i],
+          })).filter(d => d.open && d.high && d.low && d.close)
+             .sort((a, b) => a.time - b.time);
+          if (rows.length >= 5) { ohlc = rows; break outer_yf_id; }
+        } catch {}
+      }
+    }
+  } else {
+    // 일봉: Yahoo Finance → Naver fchart → Stooq
+    outer_yf: for (const suffix of ['.KS', '.KQ']) {
+      const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}${suffix}?interval=1d&range=1y&events=div%2Csplit`;
+      for (const p of mkProxies(yfUrl)) {
+        try {
+          const res    = await fetch(p, { signal: AbortSignal.timeout(8000) });
+          const data   = await res.json();
+          const result = data?.chart?.result?.[0];
+          if (!result) continue;
+          const ts = result.timestamp || [];
+          const q  = result.indicators?.quote?.[0] || {};
+          if (ts.length < 5) continue;
+          const rows = ts.map((t, i) => ({
+            time:  new Date(t * 1000).toISOString().slice(0, 10),
+            open:  q.open?.[i],  high: q.high?.[i],
+            low:   q.low?.[i],   close: q.close?.[i],
+          })).filter(d => d.open && d.high && d.low && d.close)
+             .sort((a, b) => a.time < b.time ? -1 : 1).slice(-250);
+          if (rows.length >= 5) { ohlc = rows; break outer_yf; }
+        } catch {}
+      }
+    }
 
-  const card = document.createElement('div');
-  card.className = 'chart-card';
-  card.id = `card_${entry.id}`;
-  card.innerHTML = `
-    <div class="chart-header">
-      <div class="chart-info">
-        <span class="chart-name">${esc(entry.name)}</span>
-        <span class="chart-symbol">${esc(entry.symbol)}</span>
-        <span class="chart-interval-tag">일봉</span>
-      </div>
-      <button class="delete-btn" title="차트 삭제">
-        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/>
-        </svg>
-      </button>
-    </div>
-    <div class="chart-widget-wrap kr-lw-chart" id="${entry.id}"></div>`;
+    if (!ohlc) {
+      const naverUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${ticker}&timeframe=day&count=300&requestType=0`;
+      for (const p of mkProxies(naverUrl)) {
+        try {
+          const res     = await fetch(p, { signal: AbortSignal.timeout(10000) });
+          const text    = await res.text();
+          const matches = [...text.matchAll(/data="(\d{8})\|(\d+)\|(\d+)\|(\d+)\|(\d+)/g)];
+          if (matches.length >= 5) {
+            ohlc = matches.map(m => ({
+              time:  `${m[1].slice(0,4)}-${m[1].slice(4,6)}-${m[1].slice(6,8)}`,
+              open: +m[2], high: +m[3], low: +m[4], close: +m[5],
+            })).sort((a, b) => a.time < b.time ? -1 : 1);
+            break;
+          }
+        } catch {}
+      }
+    }
 
-  card.querySelector('.delete-btn').addEventListener('click',
-    () => removeChart('kr', entry.symbol, entry.id));
-  grid.appendChild(card);
+    if (!ohlc) {
+      outer_stooq: for (const suffix of ['.KS', '.KQ']) {
+        const stooqUrl = `https://stooq.com/q/d/l/?s=${ticker}${suffix}&i=d`;
+        for (const p of mkProxies(stooqUrl)) {
+          try {
+            const res   = await fetch(p, { signal: AbortSignal.timeout(9000) });
+            const text  = await res.text();
+            const lines = text.trim().split('\n');
+            if (lines.length < 3 || text.includes('No data') || text.startsWith('<')) continue;
+            const hdr = lines[0].toLowerCase().split(',');
+            const iD  = hdr.indexOf('date'), iO = hdr.indexOf('open'),
+                  iH  = hdr.indexOf('high'), iL = hdr.indexOf('low'), iC = hdr.indexOf('close');
+            const rows = lines.slice(1).map(l => {
+              const c = l.split(',');
+              return { time: c[iD], open: +c[iO], high: +c[iH], low: +c[iL], close: +c[iC] };
+            }).filter(d => d.time && !isNaN(d.close) && d.close > 0)
+              .sort((a, b) => a.time < b.time ? -1 : 1).slice(-250);
+            if (rows.length >= 5) { ohlc = rows; break outer_stooq; }
+          } catch {}
+        }
+      }
+    }
+  }
 
-  const container = document.getElementById(entry.id);
+  return ohlc;
+}
 
-  // 한글 심볼 감지 (검색 대신 한글 직접 입력한 경우)
+// ─── 한국 주식 차트: Lightweight Charts 렌더링 ──────────────────
+async function loadKRChart(ticker, interval, container) {
+  // 기존 차트 인스턴스 제거
+  if (container._lwChart) { try { container._lwChart.remove(); } catch {} container._lwChart = null; }
+  container.innerHTML = `<div class="chart-loading"><div class="spinner"></div><span>불러오는 중...</span></div>`;
+
   if (!/^\d+$/.test(ticker)) {
     container.innerHTML = `
       <div class="chart-error">
         ⚠ 숫자 종목코드로 검색해 주세요<br>
-        <small>삼성전자 → <b>005930</b> · SK하이닉스 → <b>000660</b></small><br>
-        <small style="color:var(--text-3);margin-top:4px;display:block">검색창에 숫자 코드 입력 후 결과 클릭</small>
+        <small>삼성전자 → <b>005930</b> · SK하이닉스 → <b>000660</b></small>
       </div>`;
     return;
   }
 
-  // ── 데이터 fetch: Yahoo Finance → 네이버금융 fchart → Stooq (.KS/.KQ) 순서로 시도 ──
-  let ohlc = null;
-
-  // 0순위: Yahoo Finance (.KS / .KQ) — CORS 프리미엄 API, 가장 안정적
-  outer_yf: for (const suffix of ['.KS', '.KQ']) {
-    const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}${suffix}?interval=1d&range=1y&events=div%2Csplit`;
-    for (const p of mkProxies(yfUrl)) {
-      try {
-        const res  = await fetch(p, { signal: AbortSignal.timeout(8000) });
-        const data = await res.json();
-        const result = data?.chart?.result?.[0];
-        if (!result) continue;
-        const ts = result.timestamp || [];
-        const q  = result.indicators?.quote?.[0] || {};
-        if (ts.length < 5) continue;
-        const rows = ts.map((t, i) => ({
-          time:  new Date(t * 1000).toISOString().slice(0, 10),
-          open:  q.open?.[i],  high: q.high?.[i],
-          low:   q.low?.[i],   close: q.close?.[i],
-        })).filter(d => d.open && d.high && d.low && d.close)
-           .sort((a, b) => a.time < b.time ? -1 : 1).slice(-250);
-        if (rows.length >= 5) { ohlc = rows; break outer_yf; }
-      } catch {}
-    }
-  }
-
-  // 1순위: 네이버금융 fchart XML API
-  if (!ohlc) {
-    const naverUrl = `https://fchart.stock.naver.com/sise.nhn?symbol=${ticker}&timeframe=day&count=300&requestType=0`;
-    for (const p of mkProxies(naverUrl)) {
-      try {
-        const res  = await fetch(p, { signal: AbortSignal.timeout(10000) });
-        const text = await res.text();
-        // 네이버 fchart: <item data="20260411|72100|73000|71500|72500|12345678"/>
-        const matches = [...text.matchAll(/data="(\d{8})\|(\d+)\|(\d+)\|(\d+)\|(\d+)/g)];
-        if (matches.length >= 5) {
-          ohlc = matches.map(m => ({
-            time:  `${m[1].slice(0,4)}-${m[1].slice(4,6)}-${m[1].slice(6,8)}`,
-            open: +m[2], high: +m[3], low: +m[4], close: +m[5],
-          })).sort((a, b) => a.time < b.time ? -1 : 1);
-          break;
-        }
-      } catch {}
-    }
-  }
-
-  // 2순위: Stooq CSV (.KS / .KQ)
-  if (!ohlc) {
-    outer: for (const suffix of ['.KS', '.KQ']) {
-      const stooqUrl = `https://stooq.com/q/d/l/?s=${ticker}${suffix}&i=d`;
-      for (const p of mkProxies(stooqUrl)) {
-        try {
-          const res  = await fetch(p, { signal: AbortSignal.timeout(9000) });
-          const text = await res.text();
-          const lines = text.trim().split('\n');
-          if (lines.length < 3 || text.includes('No data') || text.startsWith('<')) continue;
-          const hdr  = lines[0].toLowerCase().split(',');
-          const iD   = hdr.indexOf('date'), iO = hdr.indexOf('open'),
-                iH   = hdr.indexOf('high'), iL = hdr.indexOf('low'), iC = hdr.indexOf('close');
-          const rows = lines.slice(1).map(l => {
-            const c = l.split(',');
-            return { time: c[iD], open: +c[iO], high: +c[iH], low: +c[iL], close: +c[iC] };
-          }).filter(d => d.time && !isNaN(d.close) && d.close > 0)
-            .sort((a, b) => a.time < b.time ? -1 : 1).slice(-250);
-          if (rows.length >= 5) { ohlc = rows; break outer; }
-        } catch {}
-      }
-    }
-  }
+  const ohlc = await fetchKRChartData(ticker, interval);
 
   if (!ohlc || !ohlc.length) {
     container.innerHTML = `
       <div class="chart-error">
         ⚠ 데이터 로드 실패 (${esc(ticker)})<br>
-        <small style="color:var(--text-3)">네트워크 확인 후 재시도하세요</small><br>
+        <small style="color:var(--text-3)">분봉은 장 중·장 마감 직후에만 제공됩니다</small><br>
         <a href="https://finance.naver.com/item/main.naver?code=${esc(ticker)}"
            target="_blank" style="color:var(--green);font-size:12px;margin-top:8px;display:inline-block">
           네이버 금융에서 보기 ↗</a>
@@ -829,8 +830,9 @@ async function renderKRChart(entry) {
     return;
   }
 
-  // Lightweight Charts 렌더링 (v4.2.0 고정)
+  container.innerHTML = '';
   try {
+    const isIntraday = interval !== '1d';
     const chart = LightweightCharts.createChart(container, {
       width:  container.clientWidth || 500,
       height: 320,
@@ -838,11 +840,18 @@ async function renderKRChart(entry) {
       grid:   { vertLines: { color: '#2a2a36' }, horzLines: { color: '#2a2a36' } },
       crosshair: { mode: 1 },
       rightPriceScale: { borderColor: '#2a2a36' },
-      timeScale: { borderColor: '#2a2a36', timeVisible: true },
+      timeScale: {
+        borderColor: '#2a2a36',
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: isIntraday ? (t) => {
+          const d = new Date(t * 1000);
+          return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
+        } : undefined,
+      },
       handleScroll: true, handleScale: true,
     });
 
-    // v4: addCandlestickSeries / v5+: addSeries(CandlestickSeries)
     const seriesOpts = {
       upColor: '#00c896', downColor: '#ff4d4d',
       borderUpColor: '#00c896', borderDownColor: '#ff4d4d',
@@ -854,9 +863,11 @@ async function renderKRChart(entry) {
 
     series.setData(ohlc);
     chart.timeScale().fitContent();
+    container._lwChart = chart;
 
     new ResizeObserver(entries => {
-      if (entries[0]) chart.applyOptions({ width: entries[0].contentRect.width });
+      if (entries[0] && container._lwChart)
+        container._lwChart.applyOptions({ width: entries[0].contentRect.width });
     }).observe(container);
   } catch (e) {
     container.innerHTML = `
@@ -866,6 +877,50 @@ async function renderKRChart(entry) {
          target="_blank" style="color:var(--green);font-size:12px;margin-top:8px;display:inline-block">
         네이버 금융에서 보기 ↗</a></div>`;
   }
+}
+
+async function renderKRChart(entry) {
+  const grid = document.getElementById('kr-charts-grid');
+  if (!grid) return;
+  updateEmptyState('kr');
+
+  const ticker = entry.symbol.replace(/^[A-Z]+:/i, '').trim();
+
+  const card = document.createElement('div');
+  card.className = 'chart-card';
+  card.id = `card_${entry.id}`;
+  card.innerHTML = `
+    <div class="chart-header">
+      <div class="chart-info">
+        <span class="chart-name">${esc(entry.name)}</span>
+        <span class="chart-symbol">${esc(entry.symbol)}</span>
+      </div>
+      <div class="chart-intervals">
+        <button class="interval-btn active" data-iv="1d">일봉</button>
+        <button class="interval-btn" data-iv="5m">5분</button>
+        <button class="interval-btn" data-iv="1m">1분</button>
+      </div>
+      <button class="delete-btn" title="차트 삭제">
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/>
+        </svg>
+      </button>
+    </div>
+    <div class="chart-widget-wrap kr-lw-chart" id="${entry.id}"></div>`;
+
+  card.querySelector('.delete-btn').addEventListener('click',
+    () => removeChart('kr', entry.symbol, entry.id));
+
+  card.querySelectorAll('.interval-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      card.querySelectorAll('.interval-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      await loadKRChart(ticker, btn.dataset.iv, document.getElementById(entry.id));
+    });
+  });
+
+  grid.appendChild(card);
+  await loadKRChart(ticker, '1d', document.getElementById(entry.id));
 }
 
 // ─── Chart: add / render / remove ─────────────────────────────
