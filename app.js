@@ -21,10 +21,10 @@ const CFG = {
 // type: 'fng' → alternative.me 공포탐욕지수
 // type: 'er'  → open.er-api.com 환율 (fallback)
 const MARKET_ITEMS = [
-  { id: 'kospi',  label: 'KOSPI',           type: 'api', stooq: '%5EKS11', yahoo: '%5EKS11', naverIdx: 'KOSPI'  },
-  { id: 'kosdaq', label: 'KOSDAQ',          type: 'api', stooq: '%5EKQ11', yahoo: '%5EKQ11', naverIdx: 'KOSDAQ' },
-  { id: 'sp500',  label: 'S&P 500',         type: 'tv',  tvSym: 'FOREXCOM:SPXUSD' },
-  { id: 'nasdaq', label: 'NASDAQ',          type: 'tv',  tvSym: 'FOREXCOM:NSXUSD' },
+  { id: 'kospi',  label: 'KOSPI',           type: 'api', stooq: '%5EKS11', yahoo: '%5EKS11', naverIdx: 'KOSPI',  chartYf: '^KS11', tzOfs: 9  },
+  { id: 'kosdaq', label: 'KOSDAQ',          type: 'api', stooq: '%5EKQ11', yahoo: '%5EKQ11', naverIdx: 'KOSDAQ', chartYf: '^KQ11', tzOfs: 9  },
+  { id: 'sp500',  label: 'S&P 500',         type: 'tv',  tvSym: 'FOREXCOM:SPXUSD',           chartYf: '^GSPC',  tzOfs: -4 },
+  { id: 'nasdaq', label: 'NASDAQ',          type: 'tv',  tvSym: 'FOREXCOM:NSXUSD',           chartYf: '^IXIC',  tzOfs: -4 },
   { id: 'usdkrw', label: '원 / 달러',       type: 'tv',  tvSym: 'FX_IDC:USDKRW' },
   { id: 'jpykrw', label: '원 / 엔 (100엔)', type: 'tv',  tvSym: 'FX_IDC:JPYKRW' },
   { id: 'vix',    label: 'VIX',             type: 'api', stooq: '%5EVIX',  yahoo: '%5EVIX'  },
@@ -350,26 +350,147 @@ function buildMarketCards() {
     card.className = 'market-card';
     card.id = `mc-${item.id}`;
 
+    const chartBtn = item.chartYf
+      ? `<button class="mkt-chart-btn" id="mkt-chart-btn-${item.id}" title="차트 보기">📈</button>`
+      : '';
+
     if (item.type === 'tv') {
-      // TradingView single-quote 위젯 카드 (미국 지수·환율)
       card.classList.add('tv-quote-card');
-      card.innerHTML = `<div class="market-card-label">${item.label}</div>
+      card.innerHTML = `
+        <div class="market-card-top">
+          <div class="market-card-label">${item.label}</div>
+          ${chartBtn}
+        </div>
         <div class="tv-sq-wrap" id="tv-sq-${item.id}"></div>`;
       grid.appendChild(card);
       setTimeout(() => injectTVQuote(item), 0);
     } else if (item.type === 'api' || item.type === 'fng') {
-      // Stooq API 카드 (KOSPI·KOSDAQ·VIX) + 공포탐욕지수 카드
       card.innerHTML = `
-        <div class="market-card-label">${item.label}</div>
+        <div class="market-card-top">
+          <div class="market-card-label">${item.label}</div>
+          ${chartBtn}
+        </div>
         <div class="market-card-value" id="mv-${item.id}"><div class="market-skeleton skel-value"></div></div>
         <div class="market-card-change" id="mc2-${item.id}"><div class="market-skeleton skel-change"></div></div>`;
       grid.appendChild(card);
     }
+
+    // 차트 토글
+    if (item.chartYf) {
+      const btn = document.getElementById(`mkt-chart-btn-${item.id}`);
+      const containerId = `mkt-chart-${item.id}`;
+      btn?.addEventListener('click', () => {
+        let panel = document.getElementById(containerId);
+        if (panel) {
+          panel.remove();
+          btn.classList.remove('active');
+          card.style.gridColumn = '';
+        } else {
+          panel = document.createElement('div');
+          panel.id = containerId;
+          panel.className = 'mkt-chart-panel';
+          panel.innerHTML = `
+            <div class="mkt-chart-intervals">
+              <button class="interval-btn active" data-iv="1d">일봉</button>
+              <button class="interval-btn" data-iv="1m">1분봉</button>
+            </div>
+            <div class="mkt-chart-container" id="mkt-chart-c-${item.id}"></div>`;
+          card.appendChild(panel);
+          btn.classList.add('active');
+
+          panel.querySelectorAll('.interval-btn').forEach(b => {
+            b.addEventListener('click', async () => {
+              panel.querySelectorAll('.interval-btn').forEach(x => x.classList.remove('active'));
+              b.classList.add('active');
+              await loadMarketChart(item, b.dataset.iv, document.getElementById(`mkt-chart-c-${item.id}`));
+            });
+          });
+
+          loadMarketChart(item, '1d', document.getElementById(`mkt-chart-c-${item.id}`));
+        }
+      });
+    }
   });
 
-  // 업데이트 시각 초기 표시
   const el = document.getElementById('market-updated');
   if (el) el.textContent = 'TV 위젯 실시간 · 데이터 로딩 중';
+}
+
+// ─── 시장현황 미니 차트 ────────────────────────────────────────
+async function loadMarketChart(item, interval, container) {
+  if (!container) return;
+  if (container._lwChart) { try { container._lwChart.remove(); } catch {} container._lwChart = null; }
+  container.innerHTML = `<div class="chart-loading"><div class="spinner"></div><span>불러오는 중...</span></div>`;
+
+  const isIntraday = interval !== '1d';
+  const range = isIntraday ? '2d' : '1y';
+  const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(item.chartYf)}?interval=${interval}&range=${range}`;
+  let ohlc = null;
+
+  for (const p of mkProxies(yfUrl)) {
+    try {
+      const res    = await fetch(p, { signal: AbortSignal.timeout(8000) });
+      const data   = await res.json();
+      const result = data?.chart?.result?.[0];
+      if (!result) continue;
+      const ts = result.timestamp || [];
+      const q  = result.indicators?.quote?.[0] || {};
+      if (ts.length < 5) continue;
+      const rows = isIntraday
+        ? ts.map((t, i) => ({
+            time:  t + item.tzOfs * 3600,
+            open:  q.open?.[i], high: q.high?.[i],
+            low:   q.low?.[i],  close: q.close?.[i],
+          })).filter(d => d.open && d.close).sort((a, b) => a.time - b.time)
+        : ts.map((t, i) => ({
+            time:  new Date(t * 1000).toISOString().slice(0, 10),
+            open:  q.open?.[i], high: q.high?.[i],
+            low:   q.low?.[i],  close: q.close?.[i],
+          })).filter(d => d.open && d.close).sort((a, b) => a.time < b.time ? -1 : 1).slice(-250);
+      if (rows.length >= 5) { ohlc = rows; break; }
+    } catch {}
+  }
+
+  if (!ohlc) {
+    container.innerHTML = `<div class="chart-error" style="height:200px">⚠ 데이터 로드 실패<br><small style="color:var(--text-3)">1분봉은 장 중에만 제공됩니다</small></div>`;
+    return;
+  }
+
+  container.innerHTML = '';
+  try {
+    const chart = LightweightCharts.createChart(container, {
+      width: container.clientWidth || 400, height: 220,
+      layout: { background: { color: '#18181f' }, textColor: '#9898b0' },
+      grid:   { vertLines: { color: '#2a2a36' }, horzLines: { color: '#2a2a36' } },
+      crosshair: { mode: 1 },
+      rightPriceScale: { borderColor: '#2a2a36' },
+      timeScale: {
+        borderColor: '#2a2a36', timeVisible: true, secondsVisible: false,
+        tickMarkFormatter: isIntraday ? (t) => {
+          const d = new Date(t * 1000);
+          return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
+        } : undefined,
+      },
+      handleScroll: true, handleScale: true,
+    });
+    const seriesOpts = {
+      upColor: '#00c896', downColor: '#ff4d4d',
+      borderUpColor: '#00c896', borderDownColor: '#ff4d4d',
+      wickUpColor: '#00c896', wickDownColor: '#ff4d4d',
+    };
+    const series = typeof chart.addCandlestickSeries === 'function'
+      ? chart.addCandlestickSeries(seriesOpts)
+      : chart.addSeries(LightweightCharts.CandlestickSeries, seriesOpts);
+    series.setData(ohlc);
+    chart.timeScale().fitContent();
+    container._lwChart = chart;
+    new ResizeObserver(entries => {
+      if (entries[0] && container._lwChart)
+        container._lwChart.applyOptions({ width: entries[0].contentRect.width });
+    }).observe(container);
+  } catch (e) {
+    container.innerHTML = `<div class="chart-error" style="height:200px">⚠ 렌더링 실패<br><small>${esc(String(e))}</small></div>`;
+  }
 }
 
 function injectTVQuote(item) {
