@@ -538,6 +538,25 @@ body.light {
   font-weight: 600;
 }
 
+.chart-price {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-left: auto;
+  margin-right: 12px;
+}
+.cp-price {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+.cp-chg {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .chart-intervals {
   display: flex;
   gap: 3px;

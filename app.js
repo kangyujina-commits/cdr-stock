@@ -998,6 +998,24 @@ async function fetchKRChartData(ticker, interval) {
   return ohlc;
 }
 
+// ─── 차트 카드 현재가 표시 ──────────────────────────────────────
+function updateChartPrice(entryId, ohlc, isKR) {
+  const el = document.getElementById(`price_${entryId}`);
+  if (!el || !ohlc || ohlc.length < 2) return;
+  const cur  = ohlc[ohlc.length - 1].close;
+  const prev = ohlc[ohlc.length - 2].close;
+  const chg  = cur - prev;
+  const pct  = (chg / prev) * 100;
+  const sign = chg >= 0 ? '+' : '';
+  const color = chg >= 0 ? 'var(--green)' : 'var(--red)';
+  const priceStr = isKR
+    ? cur.toLocaleString('ko-KR') + '원'
+    : '$' + cur.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  el.innerHTML = `
+    <span class="cp-price">${priceStr}</span>
+    <span class="cp-chg" style="color:${color}">${sign}${pct.toFixed(2)}%</span>`;
+}
+
 // ─── 한국 주식 차트: Lightweight Charts 렌더링 ──────────────────
 async function loadKRChart(ticker, interval, container) {
   // 기존 차트 인스턴스 제거
@@ -1061,6 +1079,7 @@ async function loadKRChart(ticker, interval, container) {
     series.setData(ohlc);
     chart.timeScale().fitContent();
     container._lwChart = chart;
+    if (interval === '1d') updateChartPrice(container.id, ohlc, true);
 
     new ResizeObserver(entries => {
       if (entries[0] && container._lwChart)
@@ -1092,6 +1111,7 @@ async function renderKRChart(entry) {
         <span class="chart-name">${esc(entry.name)}</span>
         <span class="chart-symbol">${esc(entry.symbol)}</span>
       </div>
+      <div class="chart-price" id="price_${entry.id}"></div>
       <div class="chart-intervals">
         <button class="interval-btn active" data-iv="1d">일봉</button>
         <button class="interval-btn" data-iv="5m">5분</button>
@@ -1184,6 +1204,7 @@ async function renderUSChart(entry) {
         <span class="chart-name">${esc(entry.name)}</span>
         <span class="chart-symbol">${esc(entry.symbol)}</span>
       </div>
+      <div class="chart-price" id="price_${entry.id}"></div>
       <div class="chart-intervals">
         <button class="interval-btn active" data-iv="1d">일봉</button>
         <button class="interval-btn" data-iv="5m">5분</button>
@@ -1261,6 +1282,7 @@ async function loadUSChart(ticker, interval, container) {
     series.setData(ohlc);
     chart.timeScale().fitContent();
     container._lwChart = chart;
+    if (interval === '1d') updateChartPrice(container.id, ohlc, false);
 
     new ResizeObserver(entries => {
       if (entries[0] && container._lwChart)
