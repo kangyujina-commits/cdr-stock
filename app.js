@@ -654,6 +654,54 @@ async function searchSymbol(region, query) {
   }
 
   // ═══════════════════════════════════════════════════════
+  //  코인: 한글 검색 → 내장 코인명 목록 fallback
+  // ═══════════════════════════════════════════════════════
+  if ((region === 'coin-gl' || region === 'coin-kr') && /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(query)) {
+    const COIN_NAMES = [
+      ['BTC','비트코인'],['ETH','이더리움'],['XRP','리플'],['BNB','바이낸스코인'],
+      ['SOL','솔라나'],['DOGE','도지코인'],['ADA','에이다'],['AVAX','아발란체'],
+      ['DOT','폴카닷'],['MATIC','폴리곤'],['LINK','체인링크'],['TRX','트론'],
+      ['SHIB','시바이누'],['LTC','라이트코인'],['BCH','비트코인캐시'],
+      ['ETC','이더리움클래식'],['ATOM','코스모스'],['UNI','유니스왑'],
+      ['NEAR','니어프로토콜'],['FIL','파일코인'],['ALGO','알고랜드'],
+      ['VET','비체인'],['THETA','세타'],['AXS','엑시인피니티'],
+      ['SAND','더샌드박스'],['MANA','디센트럴랜드'],['EOS','이오스'],
+      ['AAVE','에이브'],['GRT','더그래프'],['ENJ','엔진코인'],
+      ['ICX','아이콘'],['KLAY','클레이튼'],['SUI','수이'],['APT','앱토스'],
+      ['ARB','아비트럼'],['OP','옵티미즘'],['HBAR','헤데라'],
+      ['XLM','스텔라루멘'],['ZEC','지캐시'],['XMR','모네로'],
+      ['RUNE','토르체인'],['1INCH','1인치'],['CRV','커브'],
+      ['SNX','신세틱스'],['MKR','메이커'],['COMP','컴파운드'],
+      ['FTM','팬텀'],['WAVES','웨이브'],['ZIL','질리카'],
+    ];
+    const q2 = query.toLowerCase();
+    const matched = COIN_NAMES.filter(([ticker, name]) =>
+      name.toLowerCase().includes(q2) || q2.includes(name.toLowerCase())
+    ).slice(0, 10);
+
+    if (matched.length) {
+      const cfg    = COIN_CFG[region];
+      const exch   = cfg.exchange.split(',')[0];
+      const suffix = cfg.defaultSuffix;
+      const list   = document.createElement('div');
+      list.className = 'search-result-list';
+      matched.forEach(([ticker, name]) => {
+        const fullSym = `${exch}:${ticker}${suffix}`;
+        const display = `${name}(${ticker})`;
+        list.appendChild(makeResultItem(fullSym, display, exch, region, dropEl));
+      });
+      dropEl.innerHTML = ''; dropEl.appendChild(list);
+      return;
+    }
+
+    dropEl.innerHTML = `<div class="search-result-list">
+      <div class="search-msg">검색 결과 없음<br>
+      <span style="color:var(--text-3);font-size:11px">영문 티커로 검색해보세요 (예: BTC, ETH)</span></div>
+    </div>`;
+    return;
+  }
+
+  // ═══════════════════════════════════════════════════════
   //  코인 / US fallback: TradingView 심볼 검색
   // ═══════════════════════════════════════════════════════
   const exchange = EXCHANGE_MAP[region] || 'NASDAQ';
