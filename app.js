@@ -82,6 +82,7 @@ const S = {
 
 // ─── Init ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  initTheme();
   initClock();
   initMainTabs();
   initSubTabs();
@@ -99,6 +100,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
   restoreCharts();
 });
+
+// ─── Theme ───────────────────────────────────────────────────
+function initTheme() {
+  const btn = document.getElementById('theme-btn');
+  if (!btn) return;
+  const apply = (light) => {
+    document.body.classList.toggle('light', light);
+    btn.textContent = light ? '🌙' : '☀️';
+    btn.title = light ? '다크 모드' : '라이트 모드';
+  };
+  apply(localStorage.getItem('theme') === 'light');
+  btn.addEventListener('click', () => {
+    const isLight = document.body.classList.toggle('light');
+    localStorage.setItem('theme', isLight ? 'light' : 'dark');
+    btn.textContent = isLight ? '🌙' : '☀️';
+    btn.title = isLight ? '다크 모드' : '라이트 모드';
+  });
+}
 
 // ─── Clock ───────────────────────────────────────────────────
 function initClock() {
