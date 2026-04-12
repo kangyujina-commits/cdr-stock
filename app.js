@@ -34,6 +34,9 @@ const MARKET_ITEMS = [
 // ─── 뉴스 소스 ───────────────────────────────────────────────
 const NEWS_SOURCES = {
   hankyung:    { name: '한국경제',    url: 'https://www.hankyung.com/feed/economy' },
+  mk:          { name: '매일경제',    url: 'https://www.mk.co.kr/rss/30000001/' },
+  yna_eco:     { name: '연합뉴스 경제', url: 'https://www.yna.co.kr/rss/economy.xml' },
+  yna_market:  { name: '연합뉴스 증권', url: 'https://www.yna.co.kr/rss/market.xml' },
   marketwatch: { name: 'MarketWatch', url: 'https://feeds.marketwatch.com/marketwatch/topstories/' },
   cnbc:        { name: 'CNBC',        url: 'https://www.cnbc.com/id/10001147/device/rss/rss.html' },
 };
