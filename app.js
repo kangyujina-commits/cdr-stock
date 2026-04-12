@@ -458,10 +458,11 @@ function initChartSearch(regions) {
         const q = input.value.trim(); if (!q) return;
         const first = dropEl.querySelector('.search-result-item[data-symbol]');
         if (first) { first.click(); return; }
-        // 한글 입력 또는 영문 종목명(숫자가 아닌 경우) → 검색 후 첫 결과 자동 선택
-        const isKorean = /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(q);
-        const isName   = region === 'us' && !/^[A-Z0-9.\-]+$/i.test(q);
-        if (isKorean || isName) {
+        // 종목명처럼 보이는 입력 → 검색 후 첫 결과 자동 선택
+        const isKorean  = /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(q);
+        // US: 소문자 포함, 공백 포함, 6자 이상 → 종목명으로 판단
+        const isUSName  = region === 'us' && (q !== q.toUpperCase() || q.includes(' ') || q.length > 5);
+        if (isKorean || isUSName) {
           searchSymbol(region, q).then(() => {
             const auto = dropEl.querySelector('.search-result-item[data-symbol]');
             if (auto) auto.click();
