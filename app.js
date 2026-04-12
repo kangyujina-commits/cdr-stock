@@ -458,9 +458,14 @@ function initChartSearch(regions) {
         const q = input.value.trim(); if (!q) return;
         const first = dropEl.querySelector('.search-result-item[data-symbol]');
         if (first) { first.click(); return; }
-        // 한글 입력 시 검색 API 호출 (이름→종목코드 자동 검색)
-        if (region === 'kr' && /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(q)) {
-          searchSymbol(region, q);
+        // 한글 입력 또는 영문 종목명(숫자가 아닌 경우) → 검색 후 첫 결과 자동 선택
+        const isKorean = /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(q);
+        const isName   = region === 'us' && !/^[A-Z0-9.\-]+$/i.test(q);
+        if (isKorean || isName) {
+          searchSymbol(region, q).then(() => {
+            const auto = dropEl.querySelector('.search-result-item[data-symbol]');
+            if (auto) auto.click();
+          });
           return;
         }
         addChart(region, buildSymbol(region, q), q.toUpperCase());
