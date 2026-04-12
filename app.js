@@ -984,10 +984,150 @@ async function addChart(region, symbol, name) {
   toast(`${name} 차트 추가`, 'success');
 }
 
-async function renderChart(region, entry) {
-  // 한국 주식은 로그인 불필요한 Lightweight Charts + Stooq 방식으로 처리
-  if (region === 'kr') { await renderKRChart(entry); return; }
+// ─── 미국 주식 차트: interval별 데이터 fetch ────────────────────
+async function fetchUSChartData(ticker, interval) {
+  let ohlc = null;
+  const isIntraday = interval !== '1d';
+  const range = interval === '1m' ? '2d' : interval === '5m' ? '5d' : '1y';
+  const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${interval}&range=${range}`;
 
+  for (const p of mkProxies(yfUrl)) {
+    try {
+      const res    = await fetch(p, { signal: AbortSignal.timeout(8000) });
+      const data   = await res.json();
+      const result = data?.chart?.result?.[0];
+      if (!result) continue;
+      const ts = result.timestamp || [];
+      const q  = result.indicators?.quote?.[0] || {};
+      if (ts.length < 5) continue;
+      const rows = isIntraday
+        ? ts.map((t, i) => ({
+            time:  t - 4 * 3600,   // UTC → ET (EDT -4h)
+            open:  q.open?.[i],  high: q.high?.[i],
+            low:   q.low?.[i],   close: q.close?.[i],
+          })).filter(d => d.open && d.high && d.low && d.close)
+             .sort((a, b) => a.time - b.time)
+        : ts.map((t, i) => ({
+            time:  new Date(t * 1000).toISOString().slice(0, 10),
+            open:  q.open?.[i],  high: q.high?.[i],
+            low:   q.low?.[i],   close: q.close?.[i],
+          })).filter(d => d.open && d.high && d.low && d.close)
+             .sort((a, b) => a.time < b.time ? -1 : 1).slice(-250);
+      if (rows.length >= 5) { ohlc = rows; break; }
+    } catch {}
+  }
+  return ohlc;
+}
+
+async function renderUSChart(entry) {
+  const grid = document.getElementById('us-charts-grid');
+  if (!grid) return;
+  updateEmptyState('us');
+
+  const ticker = entry.symbol.replace(/^[A-Z]+:/i, '').trim();
+
+  const card = document.createElement('div');
+  card.className = 'chart-card';
+  card.id = `card_${entry.id}`;
+  card.innerHTML = `
+    <div class="chart-header">
+      <div class="chart-info">
+        <span class="chart-name">${esc(entry.name)}</span>
+        <span class="chart-symbol">${esc(entry.symbol)}</span>
+      </div>
+      <div class="chart-intervals">
+        <button class="interval-btn active" data-iv="1d">일봉</button>
+        <button class="interval-btn" data-iv="5m">5분</button>
+        <button class="interval-btn" data-iv="1m">1분</button>
+      </div>
+      <button class="delete-btn" title="차트 삭제">
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/>
+        </svg>
+      </button>
+    </div>
+    <div class="chart-widget-wrap kr-lw-chart" id="${entry.id}"></div>`;
+
+  card.querySelector('.delete-btn').addEventListener('click',
+    () => removeChart('us', entry.symbol, entry.id));
+
+  card.querySelectorAll('.interval-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      card.querySelectorAll('.interval-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      await loadUSChart(ticker, btn.dataset.iv, document.getElementById(entry.id));
+    });
+  });
+
+  grid.appendChild(card);
+  await loadUSChart(ticker, '1d', document.getElementById(entry.id));
+}
+
+async function loadUSChart(ticker, interval, container) {
+  if (container._lwChart) { try { container._lwChart.remove(); } catch {} container._lwChart = null; }
+  container.innerHTML = `<div class="chart-loading"><div class="spinner"></div><span>불러오는 중...</span></div>`;
+
+  const ohlc = await fetchUSChartData(ticker, interval);
+
+  if (!ohlc || !ohlc.length) {
+    container.innerHTML = `
+      <div class="chart-error">
+        ⚠ 데이터 로드 실패 (${esc(ticker)})<br>
+        <small style="color:var(--text-3)">분봉은 장 중·장 마감 직후에만 제공됩니다</small>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = '';
+  try {
+    const isIntraday = interval !== '1d';
+    const chart = LightweightCharts.createChart(container, {
+      width:  container.clientWidth || 500,
+      height: 320,
+      layout: { background: { color: '#18181f' }, textColor: '#9898b0' },
+      grid:   { vertLines: { color: '#2a2a36' }, horzLines: { color: '#2a2a36' } },
+      crosshair: { mode: 1 },
+      rightPriceScale: { borderColor: '#2a2a36' },
+      timeScale: {
+        borderColor: '#2a2a36',
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: isIntraday ? (t) => {
+          const d = new Date(t * 1000);
+          return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
+        } : undefined,
+      },
+      handleScroll: true, handleScale: true,
+    });
+
+    const seriesOpts = {
+      upColor: '#00c896', downColor: '#ff4d4d',
+      borderUpColor: '#00c896', borderDownColor: '#ff4d4d',
+      wickUpColor: '#00c896', wickDownColor: '#ff4d4d',
+    };
+    const series = typeof chart.addCandlestickSeries === 'function'
+      ? chart.addCandlestickSeries(seriesOpts)
+      : chart.addSeries(LightweightCharts.CandlestickSeries, seriesOpts);
+
+    series.setData(ohlc);
+    chart.timeScale().fitContent();
+    container._lwChart = chart;
+
+    new ResizeObserver(entries => {
+      if (entries[0] && container._lwChart)
+        container._lwChart.applyOptions({ width: entries[0].contentRect.width });
+    }).observe(container);
+  } catch (e) {
+    container.innerHTML = `<div class="chart-error">⚠ 차트 렌더링 실패<br>
+      <small style="color:var(--text-3)">${esc(String(e))}</small></div>`;
+  }
+}
+
+async function renderChart(region, entry) {
+  if (region === 'kr') { await renderKRChart(entry); return; }
+  if (region === 'us') { await renderUSChart(entry); return; }
+
+  // 코인: TradingView 위젯
   await ensureTradingView();
   if (!window.TradingView) { toast('TradingView를 불러올 수 없습니다', 'error'); return; }
 
@@ -996,10 +1136,7 @@ async function renderChart(region, entry) {
   if (!grid) return;
   updateEmptyState(region);
 
-  const isCoin = region.startsWith('coin-');
-  const tz     = isCoin ? (COIN_CFG[region]?.tz || 'UTC')
-               : region === 'kr' ? 'Asia/Seoul' : 'America/New_York';
-  const locale = region === 'kr' ? 'ko' : 'en';
+  const tz = COIN_CFG[region]?.tz || 'UTC';
 
   const card = document.createElement('div');
   card.className = 'chart-card'; card.id = `card_${entry.id}`;
@@ -1024,7 +1161,7 @@ async function renderChart(region, entry) {
   try {
     new TradingView.widget({
       autosize: true, symbol: entry.symbol, interval: '1',
-      timezone: tz, theme: 'dark', style: '1', locale,
+      timezone: tz, theme: 'dark', style: '1', locale: 'en',
       toolbar_bg: '#18181f', enable_publishing: false,
       allow_symbol_change: false, save_image: false,
       hide_side_toolbar: false,
