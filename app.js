@@ -553,6 +553,7 @@ async function loadMarketChart(item, interval, container) {
       ? chart.addCandlestickSeries(seriesOpts)
       : chart.addSeries(LightweightCharts.CandlestickSeries, seriesOpts);
     series.setData(ohlc);
+    addVolumeSeries(chart, ohlc);
     chart.timeScale().fitContent();
     container._lwChart = chart;
     new ResizeObserver(entries => {
@@ -630,6 +631,33 @@ async function fetchFearGreed() {
   }
 }
 
+// ─── 최근 검색 기록 ────────────────────────────────────────────
+function loadRecent(region) {
+  try { return JSON.parse(localStorage.getItem(`recent-${region}`) || '[]'); } catch { return []; }
+}
+
+function saveRecent(region, { symbol, name }) {
+  const arr = loadRecent(region).filter(r => r.symbol !== symbol);
+  arr.unshift({ symbol, name });
+  localStorage.setItem(`recent-${region}`, JSON.stringify(arr.slice(0, 6)));
+  renderRecentSearches(region);
+}
+
+function renderRecentSearches(region) {
+  const container = document.getElementById(`recent-${region}`);
+  if (!container) return;
+  const arr = loadRecent(region);
+  if (!arr.length) { container.innerHTML = ''; return; }
+  container.innerHTML = `<span class="recent-label">최근 검색</span>` +
+    arr.map(r => {
+      const shortName = r.name.replace(/\(.*\)$/, '').trim() || r.name;
+      return `<button class="recent-chip" data-symbol="${esc(r.symbol)}" data-name="${esc(r.name)}" data-region="${region}">${esc(shortName)}</button>`;
+    }).join('');
+  container.querySelectorAll('.recent-chip').forEach(btn => {
+    btn.addEventListener('click', () => addChart(btn.dataset.region, btn.dataset.symbol, btn.dataset.name));
+  });
+}
+
 // ─── Chart + Coin Search ──────────────────────────────────────
 function initChartSearch(regions) {
   regions.forEach(region => {
@@ -667,6 +695,16 @@ function initChartSearch(regions) {
       if (e.key === 'Escape') dropEl.innerHTML = '';
     });
     btn.addEventListener('click', () => { const q = input.value.trim(); if (q) searchSymbol(region, q); });
+
+    // 최근 검색 컨테이너 주입
+    const grid = document.getElementById(`${region}-charts-grid`);
+    if (grid && !document.getElementById(`recent-${region}`)) {
+      const recentDiv = document.createElement('div');
+      recentDiv.id = `recent-${region}`;
+      recentDiv.className = 'recent-searches';
+      grid.parentNode.insertBefore(recentDiv, grid);
+    }
+    renderRecentSearches(region);
   });
 
   document.addEventListener('click', e => {
@@ -972,6 +1010,7 @@ async function fetchKRChartData(ticker, interval) {
             time:  t + 9 * 3600,   // UTC → KST (초 단위 Unix timestamp)
             open:  q.open?.[i],  high: q.high?.[i],
             low:   q.low?.[i],   close: q.close?.[i],
+            volume: q.volume?.[i] ?? undefined,
           })).filter(d => d.open && d.high && d.low && d.close)
              .sort((a, b) => a.time - b.time);
           if (rows.length >= 5) { ohlc = rows; break outer_yf_id; }
@@ -995,6 +1034,7 @@ async function fetchKRChartData(ticker, interval) {
             time:  new Date(t * 1000).toISOString().slice(0, 10),
             open:  q.open?.[i],  high: q.high?.[i],
             low:   q.low?.[i],   close: q.close?.[i],
+            volume: q.volume?.[i] ?? undefined,
           })).filter(d => d.open && d.high && d.low && d.close)
              .sort((a, b) => a.time < b.time ? -1 : 1).slice(-250);
           if (rows.length >= 5) { ohlc = rows; break outer_yf; }
@@ -1008,11 +1048,12 @@ async function fetchKRChartData(ticker, interval) {
         try {
           const res     = await fetch(p, { signal: AbortSignal.timeout(10000) });
           const text    = await res.text();
-          const matches = [...text.matchAll(/data="(\d{8})\|(\d+)\|(\d+)\|(\d+)\|(\d+)/g)];
+          const matches = [...text.matchAll(/data="(\d{8})\|(\d+)\|(\d+)\|(\d+)\|(\d+)(?:\|(\d+))?/g)];
           if (matches.length >= 5) {
             ohlc = matches.map(m => ({
               time:  `${m[1].slice(0,4)}-${m[1].slice(4,6)}-${m[1].slice(6,8)}`,
               open: +m[2], high: +m[3], low: +m[4], close: +m[5],
+              volume: m[6] ? +m[6] : undefined,
             })).sort((a, b) => a.time < b.time ? -1 : 1);
             break;
           }
@@ -1031,10 +1072,12 @@ async function fetchKRChartData(ticker, interval) {
             if (lines.length < 3 || text.includes('No data') || text.startsWith('<')) continue;
             const hdr = lines[0].toLowerCase().split(',');
             const iD  = hdr.indexOf('date'), iO = hdr.indexOf('open'),
-                  iH  = hdr.indexOf('high'), iL = hdr.indexOf('low'), iC = hdr.indexOf('close');
+                  iH  = hdr.indexOf('high'), iL = hdr.indexOf('low'), iC = hdr.indexOf('close'),
+                  iV  = hdr.indexOf('volume');
             const rows = lines.slice(1).map(l => {
               const c = l.split(',');
-              return { time: c[iD], open: +c[iO], high: +c[iH], low: +c[iL], close: +c[iC] };
+              return { time: c[iD], open: +c[iO], high: +c[iH], low: +c[iL], close: +c[iC],
+                       volume: iV >= 0 ? +c[iV] : undefined };
             }).filter(d => d.time && !isNaN(d.close) && d.close > 0)
               .sort((a, b) => a.time < b.time ? -1 : 1).slice(-250);
             if (rows.length >= 5) { ohlc = rows; break outer_stooq; }
@@ -1045,6 +1088,33 @@ async function fetchKRChartData(ticker, interval) {
   }
 
   return ohlc;
+}
+
+// ─── 거래량(Volume) 히스토그램 헬퍼 ──────────────────────────────
+function addVolumeSeries(chart, ohlc) {
+  try {
+    const volData = ohlc
+      .filter(d => d.volume != null && d.volume > 0)
+      .map(d => ({
+        time:  d.time,
+        value: d.volume,
+        color: d.close >= d.open ? 'rgba(0,200,150,0.35)' : 'rgba(255,77,77,0.35)',
+      }));
+    if (!volData.length) return;
+
+    const volOpts = {
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'vol',
+      lastValueVisible: false,
+      priceLineVisible: false,
+    };
+    const volSeries = typeof chart.addHistogramSeries === 'function'
+      ? chart.addHistogramSeries(volOpts)
+      : chart.addSeries(LightweightCharts.HistogramSeries, volOpts);
+
+    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
+    volSeries.setData(volData);
+  } catch {}
 }
 
 // ─── 차트 카드 현재가 표시 ──────────────────────────────────────
@@ -1126,6 +1196,7 @@ async function loadKRChart(ticker, interval, container) {
       : chart.addSeries(LightweightCharts.CandlestickSeries, seriesOpts);
 
     series.setData(ohlc);
+    addVolumeSeries(chart, ohlc);
     chart.timeScale().fitContent();
     container._lwChart = chart;
     if (interval === '1d') updateChartPrice(container.id, ohlc, true);
@@ -1204,6 +1275,7 @@ async function addChart(region, symbol, name) {
   const entry = { symbol, name: name || symbol, id: `tv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` };
   arr.push(entry);
   saveCharts(region);
+  saveRecent(region, { symbol, name: name || symbol });
   await renderChart(region, entry);
   toast(`${name} 차트 추가`, 'success');
 }
@@ -1229,12 +1301,14 @@ async function fetchUSChartData(ticker, interval) {
             time:  t - 4 * 3600,   // UTC → ET (EDT -4h)
             open:  q.open?.[i],  high: q.high?.[i],
             low:   q.low?.[i],   close: q.close?.[i],
+            volume: q.volume?.[i] ?? undefined,
           })).filter(d => d.open && d.high && d.low && d.close)
              .sort((a, b) => a.time - b.time)
         : ts.map((t, i) => ({
             time:  new Date(t * 1000).toISOString().slice(0, 10),
             open:  q.open?.[i],  high: q.high?.[i],
             low:   q.low?.[i],   close: q.close?.[i],
+            volume: q.volume?.[i] ?? undefined,
           })).filter(d => d.open && d.high && d.low && d.close)
              .sort((a, b) => a.time < b.time ? -1 : 1).slice(-250);
       if (rows.length >= 5) { ohlc = rows; break; }
@@ -1341,6 +1415,7 @@ async function loadUSChart(ticker, interval, container) {
       : chart.addSeries(LightweightCharts.CandlestickSeries, seriesOpts);
 
     series.setData(ohlc);
+    addVolumeSeries(chart, ohlc);
     chart.timeScale().fitContent();
     container._lwChart = chart;
     if (interval === '1d') updateChartPrice(container.id, ohlc, false);

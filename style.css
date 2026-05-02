@@ -836,14 +836,136 @@ body.light {
 /* ============================================
    RESPONSIVE (PC 기준, 좁은 화면)
    ============================================ */
+/* ============================================
+   RECENT SEARCHES (최근 검색)
+   ============================================ */
+.recent-searches {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 0;
+  margin-bottom: 10px;
+}
+
+.recent-label {
+  font-size: 11px;
+  color: var(--text-3);
+  letter-spacing: 0.3px;
+  margin-right: 2px;
+  flex-shrink: 0;
+}
+
+.recent-chip {
+  padding: 4px 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.recent-chip:hover {
+  border-color: var(--green);
+  color: var(--green);
+  background: var(--green-dim);
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
 @media (max-width: 1200px) {
   .market-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
 @media (max-width: 900px) {
   .charts-grid { grid-template-columns: 1fr; }
   .market-grid { grid-template-columns: repeat(2, 1fr); }
   .search-dropdown { width: 100%; }
   .search-wrap { max-width: 100%; }
+}
+
+/* ─── 태블릿 (768px) ──────────────────────── */
+@media (max-width: 768px) {
+  .main { padding: 14px 14px 30px; }
+  .market-card { padding: 14px 16px; }
+  .market-card-value { font-size: 20px; }
+  .watchlist-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* ─── 모바일 (600px) ──────────────────────── */
+@media (max-width: 600px) {
+  /* 헤더: 2줄로 (로고+우측 / 탭) */
+  .header {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 8px 12px 4px;
+    gap: 4px;
+  }
+  .header-left { order: 1; }
+  .header-right { order: 2; margin-left: auto; gap: 8px; }
+  .main-tabs {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 4px;
+    gap: 0;
+  }
+  .main-tabs::-webkit-scrollbar { display: none; }
+  .tab-btn { padding: 6px 12px; font-size: 12px; white-space: nowrap; }
+
+  /* 메인 */
+  .main { padding: 12px 10px 30px; }
+
+  /* 서브탭 */
+  .sub-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .sub-tabs::-webkit-scrollbar { display: none; }
+  .sub-tab-btn { white-space: nowrap; padding: 10px 14px; font-size: 12px; }
+
+  /* 차트 카드 헤더 — 줄바꿈 허용 */
+  .chart-header {
+    flex-wrap: wrap;
+    padding: 8px 10px;
+    gap: 4px;
+    row-gap: 6px;
+  }
+  .chart-info { flex: 1; min-width: 0; }
+  .chart-price { order: 10; width: 100%; margin-right: 0; margin-left: 0; }
+  .chart-intervals { order: 2; }
+  .watch-btn { order: 3; }
+  .delete-btn { order: 4; }
+
+  /* 검색 */
+  .search-wrap { max-width: 100%; }
+  .search-dropdown { width: 100%; }
+  .search-input { font-size: 12px; }
+
+  /* 시장현황 */
+  .market-card { padding: 12px 12px; }
+  .market-card-value { font-size: 18px; }
+  .market-card-label { font-size: 11px; }
+
+  /* 관심종목 */
+  .watchlist-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .wl-price { font-size: 16px; }
+  .wl-name { max-width: 120px; }
+
+  /* 뉴스 */
+  .news-item { padding: 10px 12px; gap: 10px; }
+  .news-title { font-size: 13px; }
+}
+
+/* ─── 소형 모바일 (400px 이하) ─────────────── */
+@media (max-width: 400px) {
+  .market-grid { grid-template-columns: 1fr; }
+  .watchlist-grid { grid-template-columns: 1fr; }
+  .logo { font-size: 14px; }
+  .clock { font-size: 11px; }
 }
 
 /* ============================================
