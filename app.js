@@ -77,6 +77,7 @@ const S = {
   news: { kr: { src: 'hankyung' }, us: { src: 'marketwatch' } },
   cache: {},
   charts: { ..._cleaned },
+  watchlist: (() => { try { return JSON.parse(localStorage.getItem('watchlist') || '[]'); } catch { return []; } })(),
   searchTimer: null,
 };
 
@@ -88,6 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSubTabs();
   initNewsSources();
   initNewsRefresh();
+  initWatchlist();
   initChartSearch(['kr', 'us', 'coin-gl', 'coin-kr']);
   initClearBtn('clear-charts-btn', ['kr', 'us']);
   initClearBtn('clear-coin-btn',   ['coin-gl', 'coin-kr']);
@@ -141,6 +143,7 @@ function initMainTabs() {
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById(`${btn.dataset.tab}-tab`).classList.add('active');
+      if (btn.dataset.tab === 'watchlist') refreshWatchlistPrices();
     });
   });
 }
@@ -1109,6 +1112,7 @@ async function renderKRChart(entry) {
   const card = document.createElement('div');
   card.className = 'chart-card';
   card.id = `card_${entry.id}`;
+  const krWatched = isWatchlisted(entry.symbol);
   card.innerHTML = `
     <div class="chart-header">
       <div class="chart-info">
@@ -1121,6 +1125,7 @@ async function renderKRChart(entry) {
         <button class="interval-btn" data-iv="5m">5분</button>
         <button class="interval-btn" data-iv="1m">1분</button>
       </div>
+      <button class="watch-btn${krWatched ? ' watched' : ''}" title="${krWatched ? '관심종목 해제' : '관심종목 추가'}">${krWatched ? '★' : '☆'}</button>
       <button class="delete-btn" title="차트 삭제">
         <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/>
@@ -1131,6 +1136,10 @@ async function renderKRChart(entry) {
 
   card.querySelector('.delete-btn').addEventListener('click',
     () => removeChart('kr', entry.symbol, entry.id));
+  card.querySelector('.watch-btn').addEventListener('click', () => {
+    const btn = card.querySelector('.watch-btn');
+    toggleWatchlist(entry.symbol, entry.name, 'kr', btn);
+  });
 
   card.querySelectorAll('.interval-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -1202,6 +1211,7 @@ async function renderUSChart(entry) {
   const card = document.createElement('div');
   card.className = 'chart-card';
   card.id = `card_${entry.id}`;
+  const usWatched = isWatchlisted(entry.symbol);
   card.innerHTML = `
     <div class="chart-header">
       <div class="chart-info">
@@ -1214,6 +1224,7 @@ async function renderUSChart(entry) {
         <button class="interval-btn" data-iv="5m">5분</button>
         <button class="interval-btn" data-iv="1m">1분</button>
       </div>
+      <button class="watch-btn${usWatched ? ' watched' : ''}" title="${usWatched ? '관심종목 해제' : '관심종목 추가'}">${usWatched ? '★' : '☆'}</button>
       <button class="delete-btn" title="차트 삭제">
         <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/>
@@ -1224,6 +1235,10 @@ async function renderUSChart(entry) {
 
   card.querySelector('.delete-btn').addEventListener('click',
     () => removeChart('us', entry.symbol, entry.id));
+  card.querySelector('.watch-btn').addEventListener('click', () => {
+    const btn = card.querySelector('.watch-btn');
+    toggleWatchlist(entry.symbol, entry.name, 'us', btn);
+  });
 
   card.querySelectorAll('.interval-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -1409,6 +1424,169 @@ function ensureTradingView() {
       if (window.TradingView || tries > 50) { clearInterval(check); resolve(); }
     }, 100);
   });
+}
+
+// ─── Watchlist (관심종목) ─────────────────────────────────────
+function isWatchlisted(symbol) {
+  return S.watchlist.some(w => w.symbol === symbol);
+}
+
+function toggleWatchlist(symbol, name, region, btn) {
+  const idx = S.watchlist.findIndex(w => w.symbol === symbol);
+  if (idx > -1) {
+    S.watchlist.splice(idx, 1);
+    save('watchlist', S.watchlist);
+    if (btn) { btn.textContent = '☆'; btn.title = '관심종목 추가'; btn.classList.remove('watched'); }
+    toast('관심종목 해제');
+  } else {
+    S.watchlist.push({ symbol, name, region });
+    save('watchlist', S.watchlist);
+    if (btn) { btn.textContent = '★'; btn.title = '관심종목 해제'; btn.classList.add('watched'); }
+    toast('⭐ 관심종목 추가', 'success');
+  }
+  renderWatchlistTab();
+}
+
+function initWatchlist() {
+  renderWatchlistTab();
+  document.getElementById('watchlist-refresh-btn')?.addEventListener('click', function () {
+    this.classList.add('spinning');
+    refreshWatchlistPrices().finally(() => setTimeout(() => this.classList.remove('spinning'), 600));
+  });
+}
+
+async function fetchWatchlistPrice(item) {
+  const ticker = item.symbol.replace(/^[A-Z]+:/i, '').trim();
+  if (item.region === 'kr') {
+    for (const suffix of ['.KS', '.KQ']) {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}${suffix}?interval=1d&range=5d`;
+      for (const p of mkProxies(url)) {
+        try {
+          const res  = await fetch(p, { signal: AbortSignal.timeout(6000) });
+          const data = await res.json();
+          const meta = data?.chart?.result?.[0]?.meta;
+          const c = meta?.regularMarketPrice;
+          const o = meta?.regularMarketPreviousClose || meta?.chartPreviousClose;
+          if (c) return { close: c, open: o || c };
+        } catch {}
+      }
+    }
+  } else if (item.region === 'us') {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=5d`;
+    for (const p of mkProxies(url)) {
+      try {
+        const res  = await fetch(p, { signal: AbortSignal.timeout(6000) });
+        const data = await res.json();
+        const meta = data?.chart?.result?.[0]?.meta;
+        const c = meta?.regularMarketPrice;
+        const o = meta?.regularMarketPreviousClose || meta?.chartPreviousClose;
+        if (c) return { close: c, open: o || c };
+      } catch {}
+    }
+  }
+  return null;
+}
+
+function renderWatchlistTab() {
+  const container = document.getElementById('watchlist-grid');
+  const countEl   = document.getElementById('watchlist-count');
+  if (!container) return;
+  if (countEl) countEl.textContent = S.watchlist.length ? `${S.watchlist.length}개` : '';
+
+  if (!S.watchlist.length) {
+    container.innerHTML = `
+      <div class="empty-state" style="grid-column:1/-1">
+        <div class="empty-icon">⭐</div>
+        <div class="empty-title">관심종목이 없습니다</div>
+        <div class="empty-desc">차트 탭에서 ☆ 버튼을 눌러 종목을 추가하세요</div>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = '';
+  S.watchlist.forEach(item => {
+    const regionLabel = item.region === 'kr' ? 'KR' : item.region === 'us' ? 'US' : item.region.toUpperCase();
+    const card = document.createElement('div');
+    card.className = 'watchlist-card';
+    card.dataset.symbol = item.symbol;
+    card.innerHTML = `
+      <div class="wl-card-header">
+        <div class="wl-info">
+          <span class="wl-name">${esc(item.name)}</span>
+          <span class="wl-symbol">${esc(item.symbol)}</span>
+          <span class="wl-region-tag">${regionLabel}</span>
+        </div>
+        <button class="wl-remove-btn" title="관심종목 해제">★</button>
+      </div>
+      <div class="wl-price-wrap">
+        <span class="wl-price">—</span>
+        <span class="wl-chg wl-loading">로딩 중...</span>
+      </div>`;
+
+    card.querySelector('.wl-remove-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      // 차트 카드 별 버튼도 동기화
+      const starBtn = document.querySelector(`#card_${S.watchlist.find(w => w.symbol === item.symbol)?.id || ''} .watch-btn`);
+      toggleWatchlist(item.symbol, item.name, item.region, starBtn);
+      // 현재 열려있는 chart 카드의 별 버튼도 업데이트
+      document.querySelectorAll('.chart-card').forEach(cc => {
+        const sym = cc.querySelector('.chart-symbol')?.textContent;
+        if (sym === item.symbol) {
+          const wb = cc.querySelector('.watch-btn');
+          if (wb) { wb.textContent = '☆'; wb.classList.remove('watched'); wb.title = '관심종목 추가'; }
+        }
+      });
+    });
+
+    card.addEventListener('click', e => {
+      if (e.target.classList.contains('wl-remove-btn')) return;
+      const subTab = item.region === 'kr' ? 'kr-chart' : 'us-chart';
+      document.querySelector('.tab-btn[data-tab="chart"]')?.click();
+      setTimeout(() => {
+        document.querySelector(`.sub-tab-btn[data-subtab="${subTab}"]`)?.click();
+      }, 50);
+    });
+
+    container.appendChild(card);
+  });
+
+  // 비동기 가격 fetch
+  refreshWatchlistPrices();
+}
+
+async function refreshWatchlistPrices() {
+  const container = document.getElementById('watchlist-grid');
+  if (!container || !S.watchlist.length) return;
+
+  await Promise.all(S.watchlist.map(async item => {
+    const card    = container.querySelector(`[data-symbol="${item.symbol}"]`);
+    if (!card) return;
+    const priceEl = card.querySelector('.wl-price');
+    const chgEl   = card.querySelector('.wl-chg');
+
+    const p = await fetchWatchlistPrice(item);
+    if (!p) {
+      if (chgEl) { chgEl.textContent = '—'; chgEl.classList.remove('wl-loading'); }
+      return;
+    }
+
+    const { close, open } = p;
+    const chg  = close - open;
+    const pct  = open ? (chg / open) * 100 : 0;
+    const sign = chg >= 0 ? '+' : '';
+    const color = chg >= 0 ? 'var(--green)' : 'var(--red)';
+    const priceStr = item.region === 'kr'
+      ? close.toLocaleString('ko-KR') + '원'
+      : '$' + close.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    if (priceEl) priceEl.textContent = priceStr;
+    if (chgEl) {
+      chgEl.classList.remove('wl-loading');
+      chgEl.innerHTML = `<span style="color:${color}">${sign}${pct.toFixed(2)}%</span>`;
+    }
+    card.classList.toggle('wl-positive', chg >= 0);
+    card.classList.toggle('wl-negative', chg < 0);
+  }));
 }
 
 // ─── Utility ─────────────────────────────────────────────────

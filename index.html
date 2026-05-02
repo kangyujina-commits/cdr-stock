@@ -20,6 +20,7 @@
       <button class="tab-btn" data-tab="news">뉴스</button>
       <button class="tab-btn" data-tab="chart">차트</button>
       <button class="tab-btn" data-tab="coin">코인</button>
+      <button class="tab-btn" data-tab="watchlist">⭐ 관심</button>
     </nav>
     <div class="header-right">
       <button id="theme-btn" class="theme-btn" title="테마 변경">🌙</button>
@@ -172,6 +173,22 @@
     </section>
 
   </main>
+
+    <!-- ==================== WATCHLIST TAB ==================== -->
+    <section id="watchlist-tab" class="tab-content">
+      <div class="market-topbar">
+        <span class="market-update-label">관심종목 <span id="watchlist-count" class="wl-count-badge"></span></span>
+        <button class="icon-btn" id="watchlist-refresh-btn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          시세 새로고침
+        </button>
+      </div>
+      <div class="watchlist-grid" id="watchlist-grid"></div>
+    </section>
 
   <!-- ===== TOAST ===== -->
   <div id="toast" class="toast"></div>
