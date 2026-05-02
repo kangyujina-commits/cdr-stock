@@ -91,6 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSubTabs();
   initNewsSources();
   initNewsRefresh();
+  initNewsSearch();
   initWatchlist();
   initChartSearch(['kr', 'us', 'coin-gl', 'coin-kr']);
   initClearBtn('clear-charts-btn', ['kr', 'us']);
@@ -176,6 +177,71 @@ function initNewsSources() {
       fetchNews(region, src, true);
     });
   });
+}
+
+function initNewsSearch() {
+  ['kr', 'us'].forEach(region => {
+    const sourceBar = document.querySelector(`#${region}-news .source-bar`);
+    if (!sourceBar) return;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'news-search-wrap';
+    wrap.innerHTML = `
+      <svg class="news-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input type="text" class="news-search-input" id="${region}-news-search" placeholder="뉴스 검색...">
+      <button class="news-search-clear" id="${region}-news-clear">✕</button>`;
+    sourceBar.appendChild(wrap);
+
+    const input    = document.getElementById(`${region}-news-search`);
+    const clearBtn = document.getElementById(`${region}-news-clear`);
+
+    input.addEventListener('input', () => {
+      clearBtn.classList.toggle('visible', !!input.value.trim());
+      filterNews(region, input.value.trim());
+    });
+    clearBtn.addEventListener('click', () => {
+      input.value = '';
+      clearBtn.classList.remove('visible');
+      filterNews(region, '');
+      input.focus();
+    });
+  });
+
+  // 뉴스 소스 변경 시 검색어 초기화
+  document.querySelectorAll('.source-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const region = btn.dataset.region;
+      const input    = document.getElementById(`${region}-news-search`);
+      const clearBtn = document.getElementById(`${region}-news-clear`);
+      if (input) input.value = '';
+      if (clearBtn) clearBtn.classList.remove('visible');
+    });
+  });
+}
+
+function filterNews(region, query) {
+  const listEl = document.getElementById(`${region}-news-list`);
+  if (!listEl) return;
+  const q = query.toLowerCase();
+  let count = 0;
+
+  listEl.querySelectorAll('.news-item').forEach(item => {
+    const title = item.querySelector('.news-title')?.textContent?.toLowerCase() || '';
+    const show  = !q || title.includes(q);
+    item.style.display = show ? '' : 'none';
+    if (show) count++;
+  });
+
+  // 결과 없음 메시지
+  listEl.querySelector('.news-filter-empty')?.remove();
+  if (q && count === 0) {
+    const div = document.createElement('div');
+    div.className = 'news-filter-empty';
+    div.textContent = `"${query}" 검색 결과가 없습니다`;
+    listEl.appendChild(div);
+  }
 }
 
 function initNewsRefresh() {
@@ -265,6 +331,10 @@ function renderNews(listEl, items) {
       <span class="news-meta"><span class="news-time">${relTime(item.pubDate)}</span></span>`;
     listEl.appendChild(a);
   });
+  // 활성 검색어 유지
+  const region = listEl.id.replace('-news-list', '');
+  const q = document.getElementById(`${region}-news-search`)?.value?.trim();
+  if (q) filterNews(region, q);
 }
 
 function relTime(dateStr) {
