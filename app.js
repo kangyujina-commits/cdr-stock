@@ -35,12 +35,12 @@ const MARKET_ITEMS = [
 
 // ─── 뉴스 소스 ───────────────────────────────────────────────
 const NEWS_SOURCES = {
-  hankyung:    { name: '한국경제',    url: 'https://www.hankyung.com/feed/economy' },
-  mk:          { name: '매일경제',    url: 'https://www.mk.co.kr/rss/30000001/' },
-  yna_eco:     { name: '연합뉴스 경제', url: 'https://www.yna.co.kr/rss/economy.xml' },
-  yna_market:  { name: '연합뉴스 증권', url: 'https://www.yna.co.kr/rss/market.xml' },
-  marketwatch: { name: 'MarketWatch', url: 'https://feeds.marketwatch.com/marketwatch/topstories/' },
-  cnbc:        { name: 'CNBC',        url: 'https://www.cnbc.com/id/10001147/device/rss/rss.html' },
+  hankyung:    { name: '한국경제',      region: 'kr', url: 'https://www.hankyung.com/feed/economy' },
+  mk:          { name: '매일경제',      region: 'kr', url: 'https://www.mk.co.kr/rss/30000001/' },
+  yna_eco:     { name: '연합뉴스 경제', region: 'kr', url: 'https://www.yna.co.kr/rss/economy.xml' },
+  yna_market:  { name: '연합뉴스 증권', region: 'kr', url: 'https://www.yna.co.kr/rss/market.xml' },
+  marketwatch: { name: 'MarketWatch',  region: 'us', url: 'https://feeds.marketwatch.com/marketwatch/topstories/' },
+  cnbc:        { name: 'CNBC',         region: 'us', url: 'https://www.cnbc.com/id/10001147/device/rss/rss.html' },
 };
 
 // ─── 코인 검색 거래소 설정 ────────────────────────────────────
@@ -185,14 +185,21 @@ function initNewsSearch() {
     const clearBtn = document.getElementById(`${region}-news-clear`);
     if (!input || !clearBtn) return;
 
+    let searchTimer = null;
     input.addEventListener('input', () => {
-      clearBtn.classList.toggle('visible', !!input.value.trim());
-      filterNews(region, input.value.trim());
+      const q = input.value.trim();
+      clearBtn.classList.toggle('visible', !!q);
+      clearTimeout(searchTimer);
+      if (!q) {
+        restoreNewsList(region);
+        return;
+      }
+      searchTimer = setTimeout(() => searchAllNews(region, q), 400);
     });
     clearBtn.addEventListener('click', () => {
       input.value = '';
       clearBtn.classList.remove('visible');
-      filterNews(region, '');
+      restoreNewsList(region);
       input.focus();
     });
   });
@@ -209,27 +216,86 @@ function initNewsSearch() {
   });
 }
 
-function filterNews(region, query) {
+// 검색 해제 시 현재 소스 뉴스로 복원
+function restoreNewsList(region) {
+  const listEl = document.getElementById(`${region}-news-list`);
+  const cached = S.cache[`${region}_${S.news[region].src}`];
+  if (listEl && cached?.items) renderNews(listEl, cached.items);
+}
+
+// 전체 소스 통합 검색
+async function searchAllNews(region, query) {
   const listEl = document.getElementById(`${region}-news-list`);
   if (!listEl) return;
+  listEl.innerHTML = `<div class="news-loading"><div class="spinner"></div><span>전체 소스 검색 중...</span></div>`;
+
+  const sources = Object.entries(NEWS_SOURCES).filter(([, cfg]) => cfg.region === region);
+
+  // 모든 소스 병렬 fetch (캐시 우선)
+  const perSource = await Promise.all(sources.map(async ([key, cfg]) => {
+    const cacheKey = `${region}_${key}`;
+    if (S.cache[cacheKey] && Date.now() - S.cache[cacheKey].ts < CFG.CACHE_MS) {
+      return S.cache[cacheKey].items.map(i => ({ ...i, _src: cfg.name }));
+    }
+    // 직접 XML 파싱
+    for (const p of mkProxies(cfg.url)) {
+      try {
+        const res  = await fetch(p, { signal: AbortSignal.timeout(10000) });
+        if (!res.ok) continue;
+        const text = await res.text();
+        if (text.trimStart().startsWith('{') || text.trimStart().startsWith('[')) continue;
+        const parsed = parseRSSXML(text);
+        if (parsed?.length) {
+          const items = parsed.slice(0, CFG.NEWS_LIMIT);
+          S.cache[cacheKey] = { ts: Date.now(), items };
+          return items.map(i => ({ ...i, _src: cfg.name }));
+        }
+      } catch {}
+    }
+    // rss2json fallback
+    try {
+      const res  = await fetch(`${CFG.RSS_PROXY}${encodeURIComponent(cfg.url)}`, { signal: AbortSignal.timeout(10000) });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status === 'ok' && data.items?.length) {
+          const items = data.items.slice(0, CFG.NEWS_LIMIT);
+          S.cache[cacheKey] = { ts: Date.now(), items };
+          return items.map(i => ({ ...i, _src: cfg.name }));
+        }
+      }
+    } catch {}
+    return [];
+  }));
+
   const q = query.toLowerCase();
-  let count = 0;
+  const matched = perSource.flat()
+    .filter(i => (i.title || '').toLowerCase().includes(q))
+    .sort((a, b) => new Date(b.pubDate || 0) - new Date(a.pubDate || 0));
 
-  listEl.querySelectorAll('.news-item').forEach(item => {
-    const title = item.querySelector('.news-title')?.textContent?.toLowerCase() || '';
-    const show  = !q || title.includes(q);
-    item.style.display = show ? '' : 'none';
-    if (show) count++;
-  });
-
-  // 결과 없음 메시지
-  listEl.querySelector('.news-filter-empty')?.remove();
-  if (q && count === 0) {
-    const div = document.createElement('div');
-    div.className = 'news-filter-empty';
-    div.textContent = `"${query}" 검색 결과가 없습니다`;
-    listEl.appendChild(div);
+  listEl.innerHTML = '';
+  if (!matched.length) {
+    listEl.innerHTML = `<div class="news-filter-empty">"${esc(query)}" 검색 결과가 없습니다</div>`;
+    return;
   }
+
+  // 결과 수 표시
+  const countEl = document.createElement('div');
+  countEl.className = 'news-search-result-count';
+  countEl.textContent = `${matched.length}개 결과 (${sources.length}개 소스 통합)`;
+  listEl.appendChild(countEl);
+
+  matched.forEach(item => {
+    const a = document.createElement('a');
+    a.className = 'news-item';
+    a.href = item.link || '#'; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.innerHTML = `
+      <span class="news-title">${esc(item.title || '제목 없음')}</span>
+      <span class="news-meta">
+        <span class="news-source-tag">${esc(item._src || '')}</span>
+        <span class="news-time">${relTime(item.pubDate)}</span>
+      </span>`;
+    listEl.appendChild(a);
+  });
 }
 
 function initNewsRefresh() {
