@@ -229,45 +229,49 @@ body.light {
 }
 
 /* News search */
+.news-search-row {
+  margin-bottom: 10px;
+}
+
 .news-search-wrap {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-left: auto;
   position: relative;
+  max-width: 360px;
 }
 
 .news-search-icon {
   position: absolute;
-  left: 8px;
+  left: 10px;
   color: var(--text-3);
   pointer-events: none;
+  flex-shrink: 0;
 }
 
 .news-search-input {
-  padding: 5px 28px 5px 26px;
+  width: 100%;
+  padding: 8px 32px 8px 32px;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   color: var(--text-1);
-  font-size: 12px;
+  font-size: 13px;
   font-family: inherit;
   outline: none;
-  width: 150px;
-  transition: border-color 0.15s, width 0.2s;
+  transition: border-color 0.15s;
 }
-.news-search-input:focus { border-color: var(--green); width: 210px; }
+.news-search-input:focus { border-color: var(--green); }
 .news-search-input::placeholder { color: var(--text-3); }
 
 .news-search-clear {
   position: absolute;
-  right: 6px;
+  right: 8px;
   background: transparent;
   border: none;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 3px 5px;
   border-radius: 3px;
   display: none;
   line-height: 1;

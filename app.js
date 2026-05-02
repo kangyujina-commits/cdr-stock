@@ -181,21 +181,9 @@ function initNewsSources() {
 
 function initNewsSearch() {
   ['kr', 'us'].forEach(region => {
-    const sourceBar = document.querySelector(`#${region}-news .source-bar`);
-    if (!sourceBar) return;
-
-    const wrap = document.createElement('div');
-    wrap.className = 'news-search-wrap';
-    wrap.innerHTML = `
-      <svg class="news-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-      </svg>
-      <input type="text" class="news-search-input" id="${region}-news-search" placeholder="뉴스 검색...">
-      <button class="news-search-clear" id="${region}-news-clear">✕</button>`;
-    sourceBar.appendChild(wrap);
-
     const input    = document.getElementById(`${region}-news-search`);
     const clearBtn = document.getElementById(`${region}-news-clear`);
+    if (!input || !clearBtn) return;
 
     input.addEventListener('input', () => {
       clearBtn.classList.toggle('visible', !!input.value.trim());
@@ -209,13 +197,13 @@ function initNewsSearch() {
     });
   });
 
-  // 뉴스 소스 변경 시 검색어 초기화
+  // 소스 변경 시 검색어 초기화
   document.querySelectorAll('.source-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const region = btn.dataset.region;
+      const region   = btn.dataset.region;
       const input    = document.getElementById(`${region}-news-search`);
       const clearBtn = document.getElementById(`${region}-news-clear`);
-      if (input) input.value = '';
+      if (input)    input.value = '';
       if (clearBtn) clearBtn.classList.remove('visible');
     });
   });

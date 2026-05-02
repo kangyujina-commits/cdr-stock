@@ -73,6 +73,15 @@
           <button class="source-btn" data-region="kr" data-source="yna_eco">연합뉴스 경제</button>
           <button class="source-btn" data-region="kr" data-source="yna_market">연합뉴스 증권</button>
         </div>
+        <div class="news-search-row">
+          <div class="news-search-wrap">
+            <svg class="news-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="text" id="kr-news-search" class="news-search-input" placeholder="제목으로 검색...">
+            <button class="news-search-clear" id="kr-news-clear">✕</button>
+          </div>
+        </div>
         <div id="kr-news-list" class="news-list">
           <div class="news-loading"><div class="spinner"></div><span>뉴스 불러오는 중...</span></div>
         </div>
@@ -83,6 +92,15 @@
           <span class="source-label">소스</span>
           <button class="source-btn active" data-region="us" data-source="marketwatch">MarketWatch</button>
           <button class="source-btn" data-region="us" data-source="cnbc">CNBC</button>
+        </div>
+        <div class="news-search-row">
+          <div class="news-search-wrap">
+            <svg class="news-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="text" id="us-news-search" class="news-search-input" placeholder="제목으로 검색...">
+            <button class="news-search-clear" id="us-news-clear">✕</button>
+          </div>
         </div>
         <div id="us-news-list" class="news-list">
           <div class="news-loading"><div class="spinner"></div><span>뉴스 불러오는 중...</span></div>
