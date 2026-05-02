@@ -184,8 +184,29 @@ function initNewsRefresh() {
   });
 }
 
+// RSS XML을 직접 파싱 (rss2json 캐시 문제 우회)
+function parseRSSXML(text) {
+  try {
+    const doc   = new DOMParser().parseFromString(text, 'text/xml');
+    const nodes = [...doc.querySelectorAll('item')];
+    if (!nodes.length) return null;
+    return nodes.map(item => {
+      // <link> 태그는 text node 또는 CDATA일 수 있음
+      const linkEl  = item.querySelector('link');
+      const linkText = linkEl
+        ? (linkEl.textContent || linkEl.nextSibling?.nodeValue || '').trim()
+        : '';
+      return {
+        title:   item.querySelector('title')?.textContent?.trim()   || '제목 없음',
+        link:    linkText,
+        pubDate: item.querySelector('pubDate')?.textContent?.trim() || '',
+      };
+    });
+  } catch { return null; }
+}
+
 async function fetchNews(region, src, force = false) {
-  const key = `${region}_${src}`;
+  const key    = `${region}_${src}`;
   const listEl = document.getElementById(`${region}-news-list`);
   const srcCfg = NEWS_SOURCES[src];
   if (!listEl || !srcCfg) return;
@@ -197,17 +218,38 @@ async function fetchNews(region, src, force = false) {
 
   listEl.innerHTML = `<div class="news-loading"><div class="spinner"></div><span>뉴스 불러오는 중...</span></div>`;
 
-  try {
-    const res  = await fetch(`${CFG.RSS_PROXY}${encodeURIComponent(srcCfg.url)}`, { signal: AbortSignal.timeout(12000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (data.status !== 'ok') throw new Error(data.message || '피드 오류');
-    if (!data.items?.length) throw new Error('항목 없음');
-    const items = data.items.slice(0, CFG.NEWS_LIMIT);
+  // ① CORS 프록시로 RSS XML 직접 파싱 (캐시 없음 → 항상 최신)
+  let items = null;
+  for (const p of mkProxies(srcCfg.url)) {
+    try {
+      const res  = await fetch(p, { signal: AbortSignal.timeout(12000) });
+      if (!res.ok) continue;
+      const text = await res.text();
+      // XML이 아닌 JSON이 반환되면 건너뜀
+      if (text.trimStart().startsWith('{') || text.trimStart().startsWith('[')) continue;
+      const parsed = parseRSSXML(text);
+      if (parsed?.length) { items = parsed.slice(0, CFG.NEWS_LIMIT); break; }
+    } catch {}
+  }
+
+  // ② 직접 파싱 실패 → rss2json fallback
+  if (!items) {
+    try {
+      const res  = await fetch(`${CFG.RSS_PROXY}${encodeURIComponent(srcCfg.url)}`, { signal: AbortSignal.timeout(12000) });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status === 'ok' && data.items?.length) {
+          items = data.items.slice(0, CFG.NEWS_LIMIT);
+        }
+      }
+    } catch {}
+  }
+
+  if (items?.length) {
     S.cache[key] = { ts: Date.now(), items };
     renderNews(listEl, items);
-  } catch (err) {
-    listEl.innerHTML = `<div class="news-error"><div>⚠ 뉴스를 불러오지 못했습니다</div><small>${esc(err.message)}</small><button class="retry-btn" onclick="fetchNews('${region}','${src}',true)">다시 시도</button></div>`;
+  } else {
+    listEl.innerHTML = `<div class="news-error"><div>⚠ 뉴스를 불러오지 못했습니다</div><button class="retry-btn" onclick="fetchNews('${region}','${src}',true)">다시 시도</button></div>`;
   }
 }
 
