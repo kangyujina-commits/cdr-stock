@@ -27,8 +27,10 @@ const MARKET_ITEMS = [
   { id: 'nasdaq', label: 'NASDAQ',          type: 'tv',  tvSym: 'FOREXCOM:NSXUSD',           chartYf: '^IXIC',  tzOfs: -4 },
   { id: 'usdkrw', label: '원 / 달러',       type: 'tv',  tvSym: 'FX_IDC:USDKRW' },
   { id: 'jpykrw', label: '원 / 엔 (100엔)', type: 'tv',  tvSym: 'FX_IDC:JPYKRW' },
-  { id: 'vix',    label: 'VIX',             type: 'api', stooq: '%5EVIX',  yahoo: '%5EVIX'  },
-  { id: 'fng',    label: '공포탐욕지수',    type: 'fng' },
+  { id: 'vix',    label: 'VIX',             type: 'api', stooq: '%5EVIX',  yahoo: '%5EVIX',
+    desc: '시장 변동성(공포) 지수 · 15 이하 안정 · 20↑ 불안 · 30↑ 공포 · 40↑ 극도 공포' },
+  { id: 'fng',    label: '공포탐욕지수',    type: 'fng',
+    desc: '암호화폐 투자 심리 · 0~24 극도공포 · 25~44 공포 · 45~54 중립 · 55~74 탐욕 · 75↑ 극도탐욕' },
 ];
 
 // ─── 뉴스 소스 ───────────────────────────────────────────────
@@ -436,13 +438,16 @@ function buildMarketCards() {
       grid.appendChild(card);
       setTimeout(() => injectTVQuote(item), 0);
     } else if (item.type === 'api' || item.type === 'fng') {
+      const descHtml = item.desc
+        ? `<div class="market-card-desc">${esc(item.desc)}</div>` : '';
       card.innerHTML = `
         <div class="market-card-top">
           <div class="market-card-label">${item.label}</div>
           ${chartBtn}
         </div>
         <div class="market-card-value" id="mv-${item.id}"><div class="market-skeleton skel-value"></div></div>
-        <div class="market-card-change" id="mc2-${item.id}"><div class="market-skeleton skel-change"></div></div>`;
+        <div class="market-card-change" id="mc2-${item.id}"><div class="market-skeleton skel-change"></div></div>
+        ${descHtml}`;
       grid.appendChild(card);
     }
 

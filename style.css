@@ -778,6 +778,16 @@ body.light {
   font-weight: 400;
 }
 
+.market-card-desc {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.5;
+  letter-spacing: 0.1px;
+}
+
 .market-card.positive .market-card-value { color: var(--green); }
 .market-card.positive .chg-amt          { color: var(--green); }
 .market-card.positive .chg-pct          { color: var(--green); opacity: 0.75; }
